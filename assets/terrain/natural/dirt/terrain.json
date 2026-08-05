@@ -1,0 +1,8 @@
+{
+  "id": "dirt",
+  "display_name": "Dirt",
+  "image": "texture.png",
+  "variants": 4,
+  "priority": 10,
+  "fallback_color": "#916846"
+}

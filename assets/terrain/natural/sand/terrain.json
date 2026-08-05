@@ -1,0 +1,8 @@
+{
+  "id": "sand",
+  "display_name": "Sand",
+  "image": "texture.png",
+  "variants": 4,
+  "priority": 20,
+  "fallback_color": "#d3be7e"
+}

@@ -1,0 +1,7 @@
+{
+  "id": "wood_floor",
+  "display_name": "Wood Floor",
+  "image": "texture.png",
+  "priority": 0,
+  "fallback_color": "#a46d42"
+}

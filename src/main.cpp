@@ -2,6 +2,7 @@
 
 #include "scene.h"
 #include "scene_render.h"
+#include "terrain_render.h"
 #include "world.h"
 
 #include <algorithm>
@@ -145,6 +146,8 @@ void LoadPlayerSprite(HDC target) {
 }
 
 void LoadGameScene() {
+    rpg::ReloadObjectDefs();
+    rpg::ReloadTerrainDefs();
     std::string error;
     const std::filesystem::path scenePath = AssetPath(L"scenes/demo_scene.json");
     if (!rpg::LoadSceneFromFile(scenePath, g_game.scene, &error)) {
@@ -403,21 +406,7 @@ void RenderGame(HWND hwnd, HDC target) {
 
     FillRectColor(hdc, client, RGB(41, 49, 47));
 
-    for (int y = 0; y < kMapHeight; ++y) {
-        for (int x = 0; x < kMapWidth; ++x) {
-            const bool wall = rpg::kWorldMap[y][x] == L'#';
-            RECT r = WorldRect(static_cast<float>(x * kTileSize), static_cast<float>(y * kTileSize), kTileSize, kTileSize);
-            FillRectColor(hdc, r, wall ? RGB(220, 189, 126) : RGB(111, 189, 132));
-
-            HPEN pen = CreatePen(PS_SOLID, 1, wall ? RGB(198, 165, 105) : RGB(92, 165, 115));
-            HGDIOBJ oldPen = SelectObject(hdc, pen);
-            HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            Rectangle(hdc, r.left, r.top, r.right, r.bottom);
-            SelectObject(hdc, oldPen);
-            SelectObject(hdc, oldBrush);
-            DeleteObject(pen);
-        }
-    }
+    rpg::DrawTerrain(hdc, g_game.scene, g_game.camera.x, g_game.camera.y);
 
     DrawSceneDetails(hdc);
 
@@ -540,6 +529,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         KillTimer(hwnd, kFrameTimer);
         rpg::ReleaseSceneRenderResources();
+        rpg::ReleaseTerrainRenderResources();
         if (g_playerSprite.dc) {
             DeleteDC(g_playerSprite.dc);
             g_playerSprite.dc = nullptr;

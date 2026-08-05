@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(RPG_SHARED_SOURCES
     src/scene.cpp
     src/scene_render.cpp
+    src/terrain_render.cpp
 )
 
 set(RPG_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
@@ -34,6 +35,7 @@ function(configure_rpg_target target_name)
     target_link_libraries(${target_name} PRIVATE
         user32
         gdi32
+        gdiplus
         msimg32
     )
 
@@ -46,3 +48,19 @@ endfunction()
 
 configure_rpg_target(FreeWalkRpgDemo)
 configure_rpg_target(SceneEditor)
+
+enable_testing()
+
+add_executable(SceneDataTests
+    tests/scene_data_tests.cpp
+    src/scene.cpp
+)
+
+target_compile_definitions(SceneDataTests PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    RPG_ASSET_DIR=L"${RPG_ASSET_DIR}"
+)
+
+add_test(NAME SceneDataRoundTrip COMMAND SceneDataTests)

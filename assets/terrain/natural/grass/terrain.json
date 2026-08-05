@@ -1,0 +1,8 @@
+{
+  "id": "grass",
+  "display_name": "Grass",
+  "image": "texture.png",
+  "variants": 4,
+  "priority": 0,
+  "fallback_color": "#69af70"
+}

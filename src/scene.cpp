@@ -3,32 +3,31 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cwctype>
 #include <fstream>
 #include <iomanip>
 #include <optional>
 #include <sstream>
+#include <system_error>
 
 namespace rpg {
 namespace {
 
-constexpr CollisionBody kTreeCollision{CollisionShape::Rect, -18.0f, -31.0f, 36.0f, 30.0f, 0.0f, true};
-constexpr CollisionBody kStoneCollision{CollisionShape::Rect, -24.0f, -23.0f, 48.0f, 22.0f, 0.0f, true};
-constexpr CollisionBody kBushCollision{CollisionShape::Rect, -28.0f, -25.0f, 56.0f, 24.0f, 0.0f, true};
+#ifndef RPG_ASSET_DIR
+#define RPG_ASSET_DIR L"assets"
+#endif
+
+std::vector<SceneObjectDef> g_objectDefs;
+bool g_objectDefsLoaded = false;
+std::vector<TerrainDef> g_naturalTerrainDefs;
+std::vector<TerrainDef> g_builtTerrainDefs;
+bool g_terrainDefsLoaded = false;
+
+constexpr std::string_view kTerrainPaletteCodes =
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
 
 std::wstring ToWide(std::string_view text) {
-    return std::wstring(text.begin(), text.end());
-}
-
-std::string ShapeToString(CollisionShape shape) {
-    switch (shape) {
-    case CollisionShape::Rect:
-        return "rect";
-    case CollisionShape::Circle:
-        return "circle";
-    case CollisionShape::None:
-    default:
-        return "none";
-    }
+    return std::filesystem::u8path(text.begin(), text.end()).wstring();
 }
 
 CollisionShape ShapeFromString(std::string_view shape) {
@@ -212,6 +211,125 @@ std::vector<std::string> ExtractObjectBlocks(const std::string& arrayText) {
     return blocks;
 }
 
+std::vector<std::string> ExtractStringValues(const std::string& arrayText) {
+    std::vector<std::string> values;
+    bool inString = false;
+    bool escaped = false;
+    std::string value;
+
+    for (char c : arrayText) {
+        if (!inString) {
+            if (c == '"') {
+                inString = true;
+                value.clear();
+            }
+            continue;
+        }
+
+        if (escaped) {
+            value.push_back(c);
+            escaped = false;
+        } else if (c == '\\') {
+            escaped = true;
+        } else if (c == '"') {
+            values.push_back(value);
+            inString = false;
+        } else {
+            value.push_back(c);
+        }
+    }
+    return values;
+}
+
+std::string LegacyNaturalTerrainId(char code) {
+    switch (code) {
+    case 'd':
+        return "dirt";
+    case 's':
+        return "sand";
+    case 'r':
+        return "gravel";
+    case 'g':
+    default:
+        return "grass";
+    }
+}
+
+std::string LegacyBuiltTerrainId(char code) {
+    switch (code) {
+    case 's':
+        return "stone_floor";
+    case 'w':
+        return "wood_floor";
+    case '.':
+    default:
+        return "none";
+    }
+}
+
+std::string DecodeTerrainCell(
+    char code,
+    const std::vector<std::string>& palette,
+    TerrainLayer layer) {
+    if (!palette.empty()) {
+        const size_t index = kTerrainPaletteCodes.find(code);
+        if (index < palette.size()) {
+            return palette[index];
+        }
+    }
+    return layer == TerrainLayer::Natural ? LegacyNaturalTerrainId(code) : LegacyBuiltTerrainId(code);
+}
+
+std::vector<std::string> CollectTerrainPalette(
+    const std::array<std::string, kMapWidth * kMapHeight>& layer) {
+    std::vector<std::string> palette;
+    for (const std::string& id : layer) {
+        if (std::find(palette.begin(), palette.end(), id) == palette.end()) {
+            palette.push_back(id);
+        }
+    }
+    return palette;
+}
+
+char EncodeTerrainCell(std::string_view id, const std::vector<std::string>& palette) {
+    const auto it = std::find(palette.begin(), palette.end(), id);
+    const size_t index = it == palette.end() ? 0 : static_cast<size_t>(std::distance(palette.begin(), it));
+    return index < kTerrainPaletteCodes.size() ? kTerrainPaletteCodes[index] : kTerrainPaletteCodes.front();
+}
+
+void LoadTerrainLayer(const std::string& text, Scene& scene) {
+    const auto terrainBlock = FindBracketedField(text, "terrain", '{', '}');
+    if (!terrainBlock) {
+        return;
+    }
+
+    std::vector<std::string> naturalPalette;
+    if (const auto paletteArray = FindBracketedField(*terrainBlock, "natural_palette", '[', ']')) {
+        naturalPalette = ExtractStringValues(*paletteArray);
+    }
+    if (const auto naturalArray = FindBracketedField(*terrainBlock, "natural", '[', ']')) {
+        const auto rows = ExtractStringValues(*naturalArray);
+        for (int y = 0; y < std::min(kMapHeight, static_cast<int>(rows.size())); ++y) {
+            for (int x = 0; x < std::min(kMapWidth, static_cast<int>(rows[y].size())); ++x) {
+                scene.naturalTerrain[y * kMapWidth + x] = DecodeTerrainCell(rows[y][x], naturalPalette, TerrainLayer::Natural);
+            }
+        }
+    }
+
+    std::vector<std::string> builtPalette;
+    if (const auto paletteArray = FindBracketedField(*terrainBlock, "built_palette", '[', ']')) {
+        builtPalette = ExtractStringValues(*paletteArray);
+    }
+    if (const auto builtArray = FindBracketedField(*terrainBlock, "built", '[', ']')) {
+        const auto rows = ExtractStringValues(*builtArray);
+        for (int y = 0; y < std::min(kMapHeight, static_cast<int>(rows.size())); ++y) {
+            for (int x = 0; x < std::min(kMapWidth, static_cast<int>(rows[y].size())); ++x) {
+                scene.builtTerrain[y * kMapWidth + x] = DecodeTerrainCell(rows[y][x], builtPalette, TerrainLayer::Built);
+            }
+        }
+    }
+}
+
 CollisionBody ParseCollision(const std::string& objectBlock, const SceneObjectDef* def) {
     CollisionBody collision = def ? def->collision : CollisionBody{};
     auto collisionBlock = FindBracketedField(objectBlock, "collision", '{', '}');
@@ -241,6 +359,165 @@ CollisionBody ParseCollision(const std::string& objectBlock, const SceneObjectDe
         collision.blocks = *value;
     }
     return collision;
+}
+
+bool IsValidObjectType(std::string_view type) {
+    return !type.empty() && std::all_of(type.begin(), type.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-';
+    });
+}
+
+bool IsSafeRelativePath(const std::filesystem::path& path) {
+    if (path.empty() || path.is_absolute()) {
+        return false;
+    }
+    return std::none_of(path.begin(), path.end(), [](const std::filesystem::path& part) {
+        return part == L"..";
+    });
+}
+
+bool LoadObjectDef(
+    const std::filesystem::path& moduleDirectory,
+    SceneObjectDef& def,
+    std::string& error) {
+    const std::filesystem::path metadataPath = moduleDirectory / L"object.json";
+    const std::string text = ReadAll(metadataPath);
+    if (text.empty()) {
+        error = "missing or empty object.json";
+        return false;
+    }
+
+    const std::string folderType = moduleDirectory.filename().u8string();
+    def.type = FindStringField(text, "type").value_or(folderType);
+    if (!IsValidObjectType(def.type)) {
+        error = "type must contain only letters, numbers, '-' or '_'";
+        return false;
+    }
+
+    const auto image = FindStringField(text, "image");
+    if (!image) {
+        error = "missing image field";
+        return false;
+    }
+
+    const std::filesystem::path imageRelative = std::filesystem::u8path(*image);
+    if (!IsSafeRelativePath(imageRelative)) {
+        error = "image must be a relative path inside the module folder";
+        return false;
+    }
+
+    const std::filesystem::path imagePath = moduleDirectory / imageRelative;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(imagePath, ec)) {
+        error = "image file does not exist: " + imagePath.u8string();
+        return false;
+    }
+    if (imagePath.extension() != L".bmp") {
+        error = "runtime images must use the .bmp format";
+        return false;
+    }
+
+    def.displayName = ToWide(FindStringField(text, "display_name").value_or(def.type));
+    def.bitmapPath = (std::filesystem::path(L"objects") / moduleDirectory.filename() / imageRelative).generic_wstring();
+    def.width = FindFloatField(text, "width").value_or(48.0f);
+    def.height = FindFloatField(text, "height").value_or(48.0f);
+    def.zOffset = FindFloatField(text, "z_offset").value_or(0.0f);
+    def.collision = ParseCollision(text, nullptr);
+
+    if (def.width <= 0.0f || def.height <= 0.0f) {
+        error = "width and height must be greater than zero";
+        return false;
+    }
+    return true;
+}
+
+std::optional<std::uint32_t> ParseRgb(std::string_view value) {
+    if (!value.empty() && value.front() == '#') {
+        value.remove_prefix(1);
+    }
+    if (value.size() != 6) {
+        return std::nullopt;
+    }
+    std::uint32_t color = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), color, 16);
+    return result.ec == std::errc() && result.ptr == value.data() + value.size()
+        ? std::optional<std::uint32_t>(color)
+        : std::nullopt;
+}
+
+bool LoadTerrainDef(
+    const std::filesystem::path& moduleDirectory,
+    TerrainLayer layer,
+    TerrainDef& def,
+    std::string& error) {
+    const std::filesystem::path metadataPath = moduleDirectory / L"terrain.json";
+    const std::string text = ReadAll(metadataPath);
+    if (text.empty()) {
+        error = "missing or empty terrain.json";
+        return false;
+    }
+
+    def.id = FindStringField(text, "id").value_or(moduleDirectory.filename().u8string());
+    if (!IsValidObjectType(def.id)) {
+        error = "id must contain only letters, numbers, '-' or '_'";
+        return false;
+    }
+
+    const auto image = FindStringField(text, "image");
+    if (!image) {
+        error = "missing image field";
+        return false;
+    }
+    const std::filesystem::path imageRelative = std::filesystem::u8path(*image);
+    if (!IsSafeRelativePath(imageRelative)) {
+        error = "image must be a relative path inside the module folder";
+        return false;
+    }
+
+    const std::filesystem::path imagePath = moduleDirectory / imageRelative;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(imagePath, ec)) {
+        error = "image file does not exist: " + imagePath.u8string();
+        return false;
+    }
+    std::wstring extension = imagePath.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) {
+        return static_cast<wchar_t>(std::towlower(c));
+    });
+    if (extension != L".png") {
+        error = "terrain images must use the .png format";
+        return false;
+    }
+
+    def.variants = static_cast<int>(FindFloatField(text, "variants").value_or(1.0f));
+    if (def.variants < 1 || def.variants > 8) {
+        error = "variants must be between 1 and 8";
+        return false;
+    }
+    for (int variant = 1; variant < def.variants; ++variant) {
+        const std::filesystem::path variantPath = imagePath.parent_path() /
+            (imagePath.stem().wstring() + L"_" + std::to_wstring(variant) + imagePath.extension().wstring());
+        if (!std::filesystem::is_regular_file(variantPath, ec)) {
+            error = "variant image does not exist: " + variantPath.u8string();
+            return false;
+        }
+    }
+
+    def.displayName = ToWide(FindStringField(text, "display_name").value_or(def.id));
+    const std::filesystem::path layerDirectory = layer == TerrainLayer::Natural ? L"natural" : L"built";
+    def.imagePath = (std::filesystem::path(L"terrain") / layerDirectory / moduleDirectory.filename() / imageRelative).generic_wstring();
+    def.layer = layer;
+    def.priority = static_cast<int>(FindFloatField(text, "priority").value_or(0.0f));
+    def.fallbackRgb = layer == TerrainLayer::Natural ? 0x6fbd84u : 0x888888u;
+    if (const auto color = FindStringField(text, "fallback_color")) {
+        if (const auto parsed = ParseRgb(*color)) {
+            def.fallbackRgb = *parsed;
+        } else {
+            error = "fallback_color must use #RRGGBB";
+            return false;
+        }
+    }
+    return true;
 }
 
 float Clamp(float value, float minValue, float maxValue) {
@@ -282,12 +559,165 @@ bool CircleIntersectsObject(const SceneObject& object, Vec2 center, float radius
 } // namespace
 
 const std::vector<SceneObjectDef>& ObjectDefs() {
-    static const std::vector<SceneObjectDef> defs = {
-        {"tree_oak", L"Oak Tree", L"objects/tree_oak.bmp", ObjectVisual::TreeOak, 118.0f, 132.0f, 0.0f, kTreeCollision},
-        {"stone_round", L"Round Stone", L"objects/stone_round.bmp", ObjectVisual::StoneRound, 62.0f, 38.0f, 0.0f, kStoneCollision},
-        {"bush", L"Bush", L"objects/bush.bmp", ObjectVisual::Bush, 74.0f, 46.0f, 0.0f, kBushCollision},
+    if (!g_objectDefsLoaded) {
+        ReloadObjectDefs();
+    }
+    return g_objectDefs;
+}
+
+bool ReloadObjectDefs(std::string* error) {
+    const std::filesystem::path root = std::filesystem::path(RPG_ASSET_DIR) / L"objects";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec)) {
+        g_objectDefsLoaded = true;
+        SetError(error, "object module directory does not exist: " + root.u8string());
+        return false;
+    }
+
+    std::vector<std::filesystem::path> moduleDirectories;
+    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_directory()) {
+            continue;
+        }
+        if (std::filesystem::is_regular_file(it->path() / L"object.json")) {
+            moduleDirectories.push_back(it->path());
+        }
+    }
+    if (ec) {
+        g_objectDefsLoaded = true;
+        SetError(error, "failed to scan object modules: " + ec.message());
+        return false;
+    }
+
+    std::sort(moduleDirectories.begin(), moduleDirectories.end());
+
+    std::vector<SceneObjectDef> loaded;
+    std::vector<std::string> warnings;
+    for (const std::filesystem::path& directory : moduleDirectories) {
+        SceneObjectDef def;
+        std::string moduleError;
+        if (!LoadObjectDef(directory, def, moduleError)) {
+            warnings.push_back(directory.filename().u8string() + ": " + moduleError);
+            continue;
+        }
+
+        const bool duplicate = std::any_of(loaded.begin(), loaded.end(), [&def](const SceneObjectDef& item) {
+            return item.type == def.type;
+        });
+        if (duplicate) {
+            warnings.push_back(directory.filename().u8string() + ": duplicate type '" + def.type + "'");
+            continue;
+        }
+        loaded.push_back(std::move(def));
+    }
+
+    g_objectDefsLoaded = true;
+    if (loaded.empty()) {
+        SetError(error, warnings.empty() ? "no object modules found under " + root.u8string() : warnings.front());
+        return false;
+    }
+
+    g_objectDefs = std::move(loaded);
+    if (error) {
+        error->clear();
+        for (size_t i = 0; i < warnings.size(); ++i) {
+            if (i > 0) {
+                *error += "; ";
+            }
+            *error += warnings[i];
+        }
+    }
+    return true;
+}
+
+const std::vector<TerrainDef>& NaturalTerrainDefs() {
+    if (!g_terrainDefsLoaded) {
+        ReloadTerrainDefs();
+    }
+    return g_naturalTerrainDefs;
+}
+
+const std::vector<TerrainDef>& BuiltTerrainDefs() {
+    if (!g_terrainDefsLoaded) {
+        ReloadTerrainDefs();
+    }
+    return g_builtTerrainDefs;
+}
+
+const TerrainDef* FindTerrainDef(std::string_view id, TerrainLayer layer) {
+    const auto& defs = layer == TerrainLayer::Natural ? NaturalTerrainDefs() : BuiltTerrainDefs();
+    const auto it = std::find_if(defs.begin(), defs.end(), [id](const TerrainDef& def) {
+        return def.id == id;
+    });
+    return it == defs.end() ? nullptr : &*it;
+}
+
+bool ReloadTerrainDefs(std::string* error) {
+    const std::filesystem::path root = std::filesystem::path(RPG_ASSET_DIR) / L"terrain";
+    std::vector<TerrainDef> natural;
+    std::vector<TerrainDef> built;
+    std::vector<std::string> warnings;
+    std::error_code ec;
+
+    const auto scanLayer = [&](TerrainLayer layer, const wchar_t* directoryName, std::vector<TerrainDef>& output) {
+        const std::filesystem::path layerRoot = root / directoryName;
+        std::vector<std::filesystem::path> directories;
+        for (std::filesystem::directory_iterator it(layerRoot, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->is_directory() && std::filesystem::is_regular_file(it->path() / L"terrain.json")) {
+                directories.push_back(it->path());
+            }
+        }
+        if (ec) {
+            warnings.push_back("failed to scan " + layerRoot.u8string() + ": " + ec.message());
+            ec.clear();
+            return;
+        }
+
+        std::sort(directories.begin(), directories.end());
+        for (const std::filesystem::path& directory : directories) {
+            TerrainDef def;
+            std::string moduleError;
+            if (!LoadTerrainDef(directory, layer, def, moduleError)) {
+                warnings.push_back(directory.filename().u8string() + ": " + moduleError);
+                continue;
+            }
+            const bool duplicate = std::any_of(output.begin(), output.end(), [&def](const TerrainDef& item) {
+                return item.id == def.id;
+            });
+            if (duplicate) {
+                warnings.push_back(directory.filename().u8string() + ": duplicate terrain id '" + def.id + "'");
+                continue;
+            }
+            output.push_back(std::move(def));
+        }
     };
-    return defs;
+
+    if (!std::filesystem::is_directory(root, ec)) {
+        g_terrainDefsLoaded = true;
+        SetError(error, "terrain module directory does not exist: " + root.u8string());
+        return false;
+    }
+
+    scanLayer(TerrainLayer::Natural, L"natural", natural);
+    scanLayer(TerrainLayer::Built, L"built", built);
+    g_terrainDefsLoaded = true;
+    if (natural.empty()) {
+        SetError(error, warnings.empty() ? "no natural terrain modules found" : warnings.front());
+        return false;
+    }
+
+    g_naturalTerrainDefs = std::move(natural);
+    g_builtTerrainDefs = std::move(built);
+    if (error) {
+        error->clear();
+        for (size_t i = 0; i < warnings.size(); ++i) {
+            if (i > 0) {
+                *error += "; ";
+            }
+            *error += warnings[i];
+        }
+    }
+    return true;
 }
 
 const SceneObjectDef* FindObjectDef(std::string_view type) {
@@ -296,6 +726,49 @@ const SceneObjectDef* FindObjectDef(std::string_view type) {
         return def.type == type;
     });
     return it == defs.end() ? nullptr : &*it;
+}
+
+Scene::Scene() {
+    naturalTerrain.fill("grass");
+    builtTerrain.fill("none");
+}
+
+std::string_view NaturalTerrainAt(const Scene& scene, int tx, int ty) {
+    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+        return "grass";
+    }
+    return scene.naturalTerrain[ty * kMapWidth + tx];
+}
+
+std::string_view BuiltTerrainAt(const Scene& scene, int tx, int ty) {
+    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+        return "none";
+    }
+    return scene.builtTerrain[ty * kMapWidth + tx];
+}
+
+bool SetNaturalTerrain(Scene& scene, int tx, int ty, std::string_view terrainId) {
+    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+        return false;
+    }
+    std::string& cell = scene.naturalTerrain[ty * kMapWidth + tx];
+    if (cell == terrainId) {
+        return false;
+    }
+    cell = terrainId;
+    return true;
+}
+
+bool SetBuiltTerrain(Scene& scene, int tx, int ty, std::string_view terrainId) {
+    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+        return false;
+    }
+    std::string& cell = scene.builtTerrain[ty * kMapWidth + tx];
+    if (cell == terrainId) {
+        return false;
+    }
+    cell = terrainId;
+    return true;
 }
 
 SceneObject MakeObject(std::string_view type, Vec2 pos, int index) {
@@ -334,6 +807,7 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
     }
 
     Scene loaded;
+    LoadTerrainLayer(text, loaded);
     int index = 1;
     for (const std::string& block : ExtractObjectBlocks(*objectsArray)) {
         auto type = FindStringField(block, "type");
@@ -359,6 +833,13 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
 }
 
 bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std::string* error) {
+    const std::vector<std::string> naturalPalette = CollectTerrainPalette(scene.naturalTerrain);
+    const std::vector<std::string> builtPalette = CollectTerrainPalette(scene.builtTerrain);
+    if (naturalPalette.size() > kTerrainPaletteCodes.size() || builtPalette.size() > kTerrainPaletteCodes.size()) {
+        SetError(error, "a terrain layer contains more than 64 terrain types");
+        return false;
+    }
+
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     if (ec) {
@@ -373,7 +854,37 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     }
 
     out << "{\n";
-    out << "  \"version\": 1,\n";
+    out << "  \"version\": 3,\n";
+    out << "  \"terrain\": {\n";
+    out << "    \"natural_palette\": [";
+    for (size_t i = 0; i < naturalPalette.size(); ++i) {
+        out << (i == 0 ? "" : ", ") << "\"" << naturalPalette[i] << "\"";
+    }
+    out << "],\n";
+    out << "    \"natural\": [\n";
+    for (int y = 0; y < kMapHeight; ++y) {
+        out << "      \"";
+        for (int x = 0; x < kMapWidth; ++x) {
+            out << EncodeTerrainCell(scene.naturalTerrain[y * kMapWidth + x], naturalPalette);
+        }
+        out << "\"" << (y + 1 == kMapHeight ? "\n" : ",\n");
+    }
+    out << "    ],\n";
+    out << "    \"built_palette\": [";
+    for (size_t i = 0; i < builtPalette.size(); ++i) {
+        out << (i == 0 ? "" : ", ") << "\"" << builtPalette[i] << "\"";
+    }
+    out << "],\n";
+    out << "    \"built\": [\n";
+    for (int y = 0; y < kMapHeight; ++y) {
+        out << "      \"";
+        for (int x = 0; x < kMapWidth; ++x) {
+            out << EncodeTerrainCell(scene.builtTerrain[y * kMapWidth + x], builtPalette);
+        }
+        out << "\"" << (y + 1 == kMapHeight ? "\n" : ",\n");
+    }
+    out << "    ]\n";
+    out << "  },\n";
     out << "  \"objects\": [\n";
     out << std::fixed << std::setprecision(1);
     for (size_t i = 0; i < scene.objects.size(); ++i) {
@@ -382,17 +893,7 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
         out << "      \"id\": \"" << object.id << "\",\n";
         out << "      \"type\": \"" << object.type << "\",\n";
         out << "      \"x\": " << object.pos.x << ",\n";
-        out << "      \"y\": " << object.pos.y << ",\n";
-        out << "      \"z\": " << object.zOffset << ",\n";
-        out << "      \"collision\": {\n";
-        out << "        \"shape\": \"" << ShapeToString(object.collision.shape) << "\",\n";
-        out << "        \"x\": " << object.collision.x << ",\n";
-        out << "        \"y\": " << object.collision.y << ",\n";
-        out << "        \"w\": " << object.collision.w << ",\n";
-        out << "        \"h\": " << object.collision.h << ",\n";
-        out << "        \"radius\": " << object.collision.radius << ",\n";
-        out << "        \"blocks\": " << (object.collision.blocks ? "true" : "false") << "\n";
-        out << "      }\n";
+        out << "      \"y\": " << object.pos.y << "\n";
         out << "    }" << (i + 1 == scene.objects.size() ? "\n" : ",\n");
     }
     out << "  ]\n";

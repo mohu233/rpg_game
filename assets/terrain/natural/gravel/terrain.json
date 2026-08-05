@@ -1,0 +1,8 @@
+{
+  "id": "gravel",
+  "display_name": "Gravel",
+  "image": "texture.png",
+  "variants": 4,
+  "priority": 30,
+  "fallback_color": "#7e8480"
+}

@@ -1,5 +1,9 @@
 #pragma once
 
+#include "world.h"
+
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -29,6 +33,21 @@ enum class ObjectVisual {
     TreeOak,
     StoneRound,
     Bush,
+};
+
+enum class TerrainLayer {
+    Natural,
+    Built,
+};
+
+struct TerrainDef {
+    std::string id;
+    std::wstring displayName;
+    std::wstring imagePath;
+    TerrainLayer layer = TerrainLayer::Natural;
+    int priority = 0;
+    int variants = 1;
+    std::uint32_t fallbackRgb = 0;
 };
 
 struct CollisionBody {
@@ -61,11 +80,26 @@ struct SceneObject {
 };
 
 struct Scene {
+    Scene();
+
+    std::array<std::string, kMapWidth * kMapHeight> naturalTerrain;
+    std::array<std::string, kMapWidth * kMapHeight> builtTerrain;
     std::vector<SceneObject> objects;
 };
 
 const std::vector<SceneObjectDef>& ObjectDefs();
 const SceneObjectDef* FindObjectDef(std::string_view type);
+bool ReloadObjectDefs(std::string* error = nullptr);
+
+const std::vector<TerrainDef>& NaturalTerrainDefs();
+const std::vector<TerrainDef>& BuiltTerrainDefs();
+const TerrainDef* FindTerrainDef(std::string_view id, TerrainLayer layer);
+bool ReloadTerrainDefs(std::string* error = nullptr);
+
+std::string_view NaturalTerrainAt(const Scene& scene, int tx, int ty);
+std::string_view BuiltTerrainAt(const Scene& scene, int tx, int ty);
+bool SetNaturalTerrain(Scene& scene, int tx, int ty, std::string_view terrainId);
+bool SetBuiltTerrain(Scene& scene, int tx, int ty, std::string_view terrainId);
 
 Scene MakeDefaultScene();
 SceneObject MakeObject(std::string_view type, Vec2 pos, int index);

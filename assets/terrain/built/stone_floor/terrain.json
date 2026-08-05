@@ -1,0 +1,7 @@
+{
+  "id": "stone_floor",
+  "display_name": "Stone Floor",
+  "image": "texture.png",
+  "priority": 0,
+  "fallback_color": "#979d99"
+}
