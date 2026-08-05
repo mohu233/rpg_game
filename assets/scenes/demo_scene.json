@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "objects": [
+    {
+      "id": "obj_1",
+      "type": "tree_oak",
+      "x": 520.0,
+      "y": 292.0,
+      "z": 0.0,
+      "collision": {
+        "shape": "rect",
+        "x": -18.0,
+        "y": -31.0,
+        "w": 36.0,
+        "h": 30.0,
+        "radius": 0.0,
+        "blocks": true
+      }
+    },
+    {
+      "id": "obj_2",
+      "type": "tree_oak",
+      "x": 915.0,
+      "y": 540.0,
+      "z": 0.0,
+      "collision": {
+        "shape": "rect",
+        "x": -18.0,
+        "y": -31.0,
+        "w": 36.0,
+        "h": 30.0,
+        "radius": 0.0,
+        "blocks": true
+      }
+    },
+    {
+      "id": "obj_3",
+      "type": "stone_round",
+      "x": 655.0,
+      "y": 410.0,
+      "z": 0.0,
+      "collision": {
+        "shape": "rect",
+        "x": -24.0,
+        "y": -23.0,
+        "w": 48.0,
+        "h": 22.0,
+        "radius": 0.0,
+        "blocks": true
+      }
+    },
+    {
+      "id": "obj_4",
+      "type": "bush",
+      "x": 775.0,
+      "y": 300.0,
+      "z": 0.0,
+      "collision": {
+        "shape": "rect",
+        "x": -28.0,
+        "y": -25.0,
+        "w": 56.0,
+        "h": 24.0,
+        "radius": 0.0,
+        "blocks": true
+      }
+    }
+  ]
+}
