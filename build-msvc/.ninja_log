@@ -1,9 +1,16 @@
 # ninja log v6
-1806	2783	8076015286784395	FreeWalkRpgDemo.exe	a2ca2187c2cb3141
-10	1797	8076015268816715	CMakeFiles/FreeWalkRpgDemo.dir/src/main.cpp.obj	a23e6bd2b9e36e38
-18	2377	8076019884723332	CMakeFiles/FreeWalkRpgDemo.dir/src/main.cpp.obj	a23e6bd2b9e36e38
-2383	3313	8076019908349216	FreeWalkRpgDemo.exe	a2ca2187c2cb3141
-6	1888	8076030909027101	CMakeFiles/FreeWalkRpgDemo.dir/src/main.cpp.obj	a23e6bd2b9e36e38
-1892	2594	8076030927885287	FreeWalkRpgDemo.exe	a2ca2187c2cb3141
 9	3390	8076043379500221	CMakeFiles/FreeWalkRpgDemo.dir/src/main.cpp.obj	a23e6bd2b9e36e38
 3393	4322	8076043413331674	FreeWalkRpgDemo.exe	a2ca2187c2cb3141
+13	675	8077053031205740	build.ninja	40a9bcafce5f5f8d
+13	675	8077053031205740	E:/rpg_game/build-msvc/cmake_install.cmake	40a9bcafce5f5f8d
+68	5025	8077077697561367	CMakeFiles/SceneEditor.dir/src/scene_render.cpp.obj	8379452a175bab63
+78	5199	8077077697671391	CMakeFiles/SceneEditor.dir/src/terrain_render.cpp.obj	d31a95ccea7f74b1
+17	5322	8077077697061404	CMakeFiles/SceneEditor.dir/src/editor.cpp.obj	5f526dba7b65f06b
+56	5405	8077077697441351	CMakeFiles/SceneEditor.dir/src/scene.cpp.obj	9681c216bc29f02d
+5407	8393	8077077750955341	SceneEditor.exe	d3575f69138ef128
+13	6920	8077079620777311	CMakeFiles/SceneEditor.dir/src/editor.cpp.obj	5f526dba7b65f06b
+6923	9378	8077079689860707	SceneEditor.exe	d3575f69138ef128
+21	2931	8077086308772550	CMakeFiles/SceneEditor.dir/src/editor.cpp.obj	5f526dba7b65f06b
+2936	5339	8077086337917468	SceneEditor.exe	d3575f69138ef128
+19	2845	8077088415286973	CMakeFiles/SceneEditor.dir/src/editor.cpp.obj	5f526dba7b65f06b
+2848	4835	8077088443572269	SceneEditor.exe	d3575f69138ef128

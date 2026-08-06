@@ -48,6 +48,7 @@ struct TerrainDef {
     int priority = 0;
     int variants = 1;
     std::uint32_t fallbackRgb = 0;
+    bool blocksMovement = false;
 };
 
 struct CollisionBody {
@@ -84,6 +85,7 @@ struct Scene {
 
     std::array<std::string, kMapWidth * kMapHeight> naturalTerrain;
     std::array<std::string, kMapWidth * kMapHeight> builtTerrain;
+    std::wstring backgroundImagePath;
     std::vector<SceneObject> objects;
 };
 
@@ -112,5 +114,6 @@ RectF ObjectCollisionRect(const SceneObject& object);
 float ObjectSortY(const SceneObject& object);
 bool PointInObjectVisual(const SceneObject& object, Vec2 point);
 bool CircleIntersectsScene(const Scene& scene, Vec2 center, float radius);
+bool CircleIntersectsBlockedTerrain(const Scene& scene, Vec2 center, float radius, bool canTraverseWater = false);
 
 } // namespace rpg

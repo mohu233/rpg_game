@@ -280,6 +280,9 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
             }
 
             const std::string_view currentId = NaturalTerrainAt(scene, x, y);
+            if (currentId == "none") {
+                continue;
+            }
             const TerrainDef* current = FindTerrainDef(currentId, TerrainLayer::Natural);
             if (!current || !DrawTerrainImage(graphics, *current, rect, x, y)) {
                 FillSolidRect(hdc, rect, current ? TerrainFallbackColor(*current) : kMissingTerrain);

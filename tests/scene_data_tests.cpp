@@ -34,7 +34,7 @@ int main() {
     if (!rpg::ReloadTerrainDefs(&error)) {
         return Fail("failed to load terrain modules: " + error);
     }
-    if (rpg::NaturalTerrainDefs().size() != 4 || rpg::BuiltTerrainDefs().size() != 2) {
+    if (rpg::NaturalTerrainDefs().size() != 7 || rpg::BuiltTerrainDefs().size() != 2) {
         return Fail("unexpected terrain module count");
     }
 
@@ -45,9 +45,15 @@ int main() {
     }
     if (rpg::NaturalTerrainAt(original, 22, 3) != "gravel" ||
         rpg::NaturalTerrainAt(original, 4, 15) != "sand" ||
+        rpg::NaturalTerrainAt(original, 6, 8) != "medium_water" ||
+        rpg::NaturalTerrainAt(original, 19, 14) != "deep_water" ||
         rpg::BuiltTerrainAt(original, 6, 3) != "stone_floor" ||
         rpg::BuiltTerrainAt(original, 20, 14) != "wood_floor") {
         return Fail("terrain layers did not decode as expected");
+    }
+
+    if (!rpg::CircleIntersectsBlockedTerrain(original, {19.0f * 48.0f + 24.0f, 14.0f * 48.0f + 24.0f}, 8.0f)) {
+        return Fail("water terrain should block movement");
     }
 
     const std::filesystem::path roundTripPath = std::filesystem::current_path() / L"scene_roundtrip_test.json";
@@ -64,6 +70,9 @@ int main() {
     }
     if (loaded.naturalTerrain != original.naturalTerrain || loaded.builtTerrain != original.builtTerrain) {
         return Fail("terrain layers changed during round trip");
+    }
+    if (loaded.backgroundImagePath != original.backgroundImagePath) {
+        return Fail("background image path changed during round trip");
     }
     if (loaded.objects.size() != original.objects.size()) {
         return Fail("scene objects changed during round trip");

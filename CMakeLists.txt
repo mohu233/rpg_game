@@ -32,10 +32,16 @@ function(configure_rpg_target target_name)
         RPG_ASSET_DIR=L"${RPG_ASSET_DIR}"
     )
 
+    target_compile_options(${target_name} PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+        $<$<CXX_COMPILER_ID:GNU>:-finput-charset=UTF-8>
+    )
+
     target_link_libraries(${target_name} PRIVATE
         user32
         gdi32
         gdiplus
+        comdlg32
         msimg32
     )
 

@@ -1,0 +1,17 @@
+filename,grid_row,grid_col,frame_id,direction,pose,description
+01_S1_side_right_contact.png,1,1,S1,side_right,contact,"right-facing side walk frame 1/8; front foot planted forward, rear foot back"
+02_S2_side_right_recoil.png,1,2,S2,side_right,recoil_down,right-facing side walk frame 2/8; body slightly lower after contact
+03_S3_side_right_passing.png,1,3,S3,side_right,passing,right-facing side walk frame 3/8; legs pass under body
+04_S4_side_right_high.png,1,4,S4,side_right,high_point,"right-facing side walk frame 4/8; body slightly higher, lifted foot moving forward"
+05_S5_side_right_contact.png,2,1,S5,side_right,opposite_contact,right-facing side walk frame 5/8; opposite foot planted forward
+06_S6_side_right_recoil.png,2,2,S6,side_right,opposite_recoil_down,right-facing side walk frame 6/8; body slightly lower after opposite contact
+07_S7_side_right_passing.png,2,3,S7,side_right,opposite_passing,right-facing side walk frame 7/8; opposite legs pass under body
+08_S8_side_right_high.png,2,4,S8,side_right,opposite_high_point,right-facing side walk frame 8/8; body slightly higher before returning to S1
+09_D1_front_down_contact.png,3,1,D1,front_down,contact,front/down walk frame 1/4; visible weight shift
+10_D2_front_down_recoil.png,3,2,D2,front_down,down,front/down walk frame 2/4; body slightly lower
+11_D3_front_down_contact.png,3,3,D3,front_down,opposite_contact,front/down walk frame 3/4; opposite weight shift
+12_D4_front_down_recoil.png,3,4,D4,front_down,opposite_down,front/down walk frame 4/4; body slightly lower
+13_U1_back_up_contact.png,4,1,U1,back_up,contact,back/up walk frame 1/4; visible weight shift from behind
+14_U2_back_up_recoil.png,4,2,U2,back_up,down,back/up walk frame 2/4; body slightly lower
+15_U3_back_up_contact.png,4,3,U3,back_up,opposite_contact,back/up walk frame 3/4; opposite weight shift from behind
+16_U4_back_up_recoil.png,4,4,U4,back_up,opposite_down,back/up walk frame 4/4; body slightly lower

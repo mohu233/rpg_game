@@ -1,0 +1,8 @@
+{
+  "id": "medium_water",
+  "display_name": "中水",
+  "image": "texture.png",
+  "priority": 50,
+  "blocks_movement": true,
+  "fallback_color": "#3a9bf0"
+}

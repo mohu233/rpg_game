@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
@@ -508,6 +509,7 @@ bool LoadTerrainDef(
     def.imagePath = (std::filesystem::path(L"terrain") / layerDirectory / moduleDirectory.filename() / imageRelative).generic_wstring();
     def.layer = layer;
     def.priority = static_cast<int>(FindFloatField(text, "priority").value_or(0.0f));
+    def.blocksMovement = FindBoolField(text, "blocks_movement").value_or(false);
     def.fallbackRgb = layer == TerrainLayer::Natural ? 0x6fbd84u : 0x888888u;
     if (const auto color = FindStringField(text, "fallback_color")) {
         if (const auto parsed = ParseRgb(*color)) {
@@ -807,6 +809,9 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
     }
 
     Scene loaded;
+    if (const auto background = FindStringField(text, "background_image")) {
+        loaded.backgroundImagePath = std::filesystem::u8path(*background).wstring();
+    }
     LoadTerrainLayer(text, loaded);
     int index = 1;
     for (const std::string& block : ExtractObjectBlocks(*objectsArray)) {
@@ -885,6 +890,9 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     }
     out << "    ]\n";
     out << "  },\n";
+    if (!scene.backgroundImagePath.empty()) {
+        out << "  \"background_image\": \"" << std::filesystem::path(scene.backgroundImagePath).generic_u8string() << "\",\n";
+    }
     out << "  \"objects\": [\n";
     out << std::fixed << std::setprecision(1);
     for (size_t i = 0; i < scene.objects.size(); ++i) {
@@ -940,6 +948,54 @@ bool CircleIntersectsScene(const Scene& scene, Vec2 center, float radius) {
     for (const SceneObject& object : scene.objects) {
         if (CircleIntersectsObject(object, center, radius)) {
             return true;
+        }
+    }
+    return false;
+}
+
+bool CircleIntersectsBlockedTerrain(const Scene& scene, Vec2 center, float radius, bool canTraverseWater) {
+    const int left = static_cast<int>(std::floor((center.x - radius) / kTileSize));
+    const int right = static_cast<int>(std::floor((center.x + radius) / kTileSize));
+    const int top = static_cast<int>(std::floor((center.y - radius) / kTileSize));
+    const int bottom = static_cast<int>(std::floor((center.y + radius) / kTileSize));
+
+    for (int ty = top; ty <= bottom; ++ty) {
+        for (int tx = left; tx <= right; ++tx) {
+            const std::string_view builtId = BuiltTerrainAt(scene, tx, ty);
+            const TerrainDef* built = FindTerrainDef(builtId, TerrainLayer::Built);
+            const bool builtBlocks = built && built->blocksMovement;
+            if (builtBlocks) {
+                const RectF tileRect{
+                    static_cast<float>(tx * kTileSize),
+                    static_cast<float>(ty * kTileSize),
+                    static_cast<float>((tx + 1) * kTileSize),
+                    static_cast<float>((ty + 1) * kTileSize),
+                };
+                if (CircleIntersectsRect(center, radius, tileRect)) {
+                    return true;
+                }
+                continue;
+            }
+
+            if (canTraverseWater) {
+                continue;
+            }
+
+            const std::string_view naturalId = NaturalTerrainAt(scene, tx, ty);
+            const TerrainDef* natural = FindTerrainDef(naturalId, TerrainLayer::Natural);
+            if (!natural || !natural->blocksMovement) {
+                continue;
+            }
+
+            const RectF tileRect{
+                static_cast<float>(tx * kTileSize),
+                static_cast<float>(ty * kTileSize),
+                static_cast<float>((tx + 1) * kTileSize),
+                static_cast<float>((ty + 1) * kTileSize),
+            };
+            if (CircleIntersectsRect(center, radius, tileRect)) {
+                return true;
+            }
         }
     }
     return false;

@@ -106,6 +106,10 @@ bool CollidesWithMap(Vec2 pos, float radius) {
         }
     }
 
+    if (rpg::CircleIntersectsBlockedTerrain(g_game.scene, {pos.x, pos.y}, radius)) {
+        return true;
+    }
+
     return rpg::CircleIntersectsScene(g_game.scene, {pos.x, pos.y}, radius);
 }
 

@@ -1,0 +1,8 @@
+{
+  "id": "shallow_water",
+  "display_name": "浅水",
+  "image": "texture.png",
+  "priority": 40,
+  "blocks_movement": true,
+  "fallback_color": "#7fc8ff"
+}
