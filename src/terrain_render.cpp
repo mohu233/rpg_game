@@ -1,7 +1,5 @@
 #include "terrain_render.h"
 
-#include "world.h"
-
 #include <gdiplus.h>
 
 #include <array>
@@ -15,8 +13,6 @@
 namespace rpg {
 namespace {
 
-constexpr COLORREF kWallFill = RGB(220, 189, 126);
-constexpr COLORREF kWallEdge = RGB(176, 141, 86);
 constexpr COLORREF kMissingTerrain = RGB(220, 38, 170);
 
 #ifndef RPG_ASSET_DIR
@@ -274,11 +270,6 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
     for (int y = 0; y < kMapHeight; ++y) {
         for (int x = 0; x < kMapWidth; ++x) {
             const RECT rect = TileRect(x, y, cameraX, cameraY);
-            if (IsWallTile(x, y)) {
-                FillSolidRect(hdc, rect, kWallFill);
-                continue;
-            }
-
             const std::string_view currentId = NaturalTerrainAt(scene, x, y);
             if (currentId == "none") {
                 continue;
@@ -300,11 +291,8 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
                 {0, 1, MaskDirection::Bottom},
             };
             for (const Neighbor& offset : neighbors) {
-                if (IsWallTile(x + offset.x, y + offset.y)) {
-                    continue;
-                }
                 const std::string_view neighborId = NaturalTerrainAt(scene, x + offset.x, y + offset.y);
-                if (neighborId == currentId) {
+                if (neighborId == "none" || neighborId == currentId) {
                     continue;
                 }
                 const TerrainDef* neighbor = FindTerrainDef(neighborId, TerrainLayer::Natural);
@@ -317,9 +305,6 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
 
     for (int y = 0; y < kMapHeight; ++y) {
         for (int x = 0; x < kMapWidth; ++x) {
-            if (IsWallTile(x, y)) {
-                continue;
-            }
             const std::string_view builtId = BuiltTerrainAt(scene, x, y);
             if (builtId == "none") {
                 continue;
@@ -335,14 +320,7 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
     for (int y = 0; y < kMapHeight; ++y) {
         for (int x = 0; x < kMapWidth; ++x) {
             const RECT rect = TileRect(x, y, cameraX, cameraY);
-            if (IsWallTile(x, y)) {
-                HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(DC_PEN));
-                HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-                SetDCPenColor(hdc, kWallEdge);
-                Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
-                SelectObject(hdc, oldBrush);
-                SelectObject(hdc, oldPen);
-            } else if (showGrid) {
+            if (showGrid) {
                 DrawLine(hdc, rect.left, rect.top, rect.right, rect.top, RGB(74, 104, 83));
                 DrawLine(hdc, rect.left, rect.top, rect.left, rect.bottom, RGB(74, 104, 83));
             }

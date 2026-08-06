@@ -787,12 +787,7 @@ SceneObject MakeObject(std::string_view type, Vec2 pos, int index) {
 }
 
 Scene MakeDefaultScene() {
-    Scene scene;
-    scene.objects.push_back(MakeObject("tree_oak", {520.0f, 292.0f}, 1));
-    scene.objects.push_back(MakeObject("tree_oak", {915.0f, 540.0f}, 2));
-    scene.objects.push_back(MakeObject("stone_round", {655.0f, 410.0f}, 3));
-    scene.objects.push_back(MakeObject("bush", {775.0f, 300.0f}, 4));
-    return scene;
+    return Scene{};
 }
 
 bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::string* error) {

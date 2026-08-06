@@ -3,12 +3,13 @@
 #include "scene.h"
 #include "scene_render.h"
 #include "terrain_render.h"
-#include "world.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <gdiplus.h>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,15 @@ constexpr std::array<Npc, 3> kNpcs = {{
 Game g_game;
 SpriteSheet g_playerSprite;
 
+struct BackgroundCache {
+    std::wstring path;
+    std::unique_ptr<Gdiplus::Bitmap> bitmap;
+    bool attempted = false;
+};
+
+BackgroundCache g_background;
+ULONG_PTR g_gdiplusToken = 0;
+
 std::filesystem::path AssetPath(const wchar_t* relative) {
     return std::filesystem::path(RPG_ASSET_DIR) / relative;
 }
@@ -88,22 +98,102 @@ float Clamp(float value, float minValue, float maxValue) {
     return std::max(minValue, std::min(maxValue, value));
 }
 
-bool IsWallTile(int tx, int ty) {
-    return rpg::IsWallTile(tx, ty);
+bool EnsureGdiPlus() {
+    if (g_gdiplusToken != 0) {
+        return true;
+    }
+
+    Gdiplus::GdiplusStartupInput input{};
+    return Gdiplus::GdiplusStartup(&g_gdiplusToken, &input, nullptr) == Gdiplus::Ok;
+}
+
+std::filesystem::path ResolveBackgroundPath(const std::wstring& storedPath) {
+    if (storedPath.empty()) {
+        return {};
+    }
+
+    const std::filesystem::path path(storedPath);
+    if (path.is_absolute()) {
+        return path;
+    }
+
+    const std::filesystem::path assetPath = AssetPath(L"") / path;
+    std::error_code ec;
+    if (std::filesystem::exists(assetPath, ec)) {
+        return assetPath;
+    }
+    return path;
+}
+
+void ReleaseBackgroundResources() {
+    g_background.bitmap.reset();
+    g_background.path.clear();
+    g_background.attempted = false;
+}
+
+bool EnsureBackgroundBitmap() {
+    if (g_background.path != g_game.scene.backgroundImagePath) {
+        ReleaseBackgroundResources();
+        g_background.path = g_game.scene.backgroundImagePath;
+    }
+
+    if (g_background.attempted) {
+        return g_background.bitmap != nullptr;
+    }
+
+    g_background.attempted = true;
+    if (g_background.path.empty() || !EnsureGdiPlus()) {
+        return false;
+    }
+
+    const std::filesystem::path imagePath = ResolveBackgroundPath(g_background.path);
+    g_background.bitmap = std::make_unique<Gdiplus::Bitmap>(imagePath.c_str());
+    if (!g_background.bitmap || g_background.bitmap->GetLastStatus() != Gdiplus::Ok) {
+        g_background.bitmap.reset();
+        OutputDebugStringW((L"background:load-fail path=" + imagePath.wstring() + L"\n").c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool DrawBackgroundImage(HDC hdc) {
+    if (!EnsureBackgroundBitmap()) {
+        return false;
+    }
+
+    Gdiplus::Bitmap* bitmap = g_background.bitmap.get();
+    if (!bitmap) {
+        return false;
+    }
+
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+
+    const Gdiplus::Rect destination(
+        static_cast<INT>(std::round(-g_game.camera.x)),
+        static_cast<INT>(std::round(-g_game.camera.y)),
+        static_cast<INT>(std::round(rpg::WorldWidth())),
+        static_cast<INT>(std::round(rpg::WorldHeight())));
+    return graphics.DrawImage(
+               bitmap,
+               destination,
+               0,
+               0,
+               static_cast<INT>(bitmap->GetWidth()),
+               static_cast<INT>(bitmap->GetHeight()),
+               Gdiplus::UnitPixel) == Gdiplus::Ok;
 }
 
 bool CollidesWithMap(Vec2 pos, float radius) {
-    const int left = static_cast<int>(std::floor((pos.x - radius) / kTileSize));
-    const int right = static_cast<int>(std::floor((pos.x + radius) / kTileSize));
-    const int top = static_cast<int>(std::floor((pos.y - radius) / kTileSize));
-    const int bottom = static_cast<int>(std::floor((pos.y + radius) / kTileSize));
-
-    for (int ty = top; ty <= bottom; ++ty) {
-        for (int tx = left; tx <= right; ++tx) {
-            if (IsWallTile(tx, ty)) {
-                return true;
-            }
-        }
+    if (pos.x - radius < 0.0f ||
+        pos.y - radius < 0.0f ||
+        pos.x + radius > rpg::WorldWidth() ||
+        pos.y + radius > rpg::WorldHeight()) {
+        return true;
     }
 
     if (rpg::CircleIntersectsBlockedTerrain(g_game.scene, {pos.x, pos.y}, radius)) {
@@ -257,33 +347,6 @@ void DrawEllipse(HDC hdc, Vec2 center, float rx, float ry, COLORREF fill, COLORR
     DeleteObject(pen);
 }
 
-void DrawWorldEllipse(HDC hdc, Vec2 center, float rx, float ry, COLORREF fill, COLORREF outline) {
-    DrawEllipse(hdc, center, rx, ry, fill, outline);
-}
-
-void DrawWorldLine(HDC hdc, Vec2 a, Vec2 b, int width, COLORREF color) {
-    HPEN pen = CreatePen(PS_SOLID, width, color);
-    HGDIOBJ oldPen = SelectObject(hdc, pen);
-    MoveToEx(hdc, static_cast<int>(a.x - g_game.camera.x), static_cast<int>(a.y - g_game.camera.y), nullptr);
-    LineTo(hdc, static_cast<int>(b.x - g_game.camera.x), static_cast<int>(b.y - g_game.camera.y));
-    SelectObject(hdc, oldPen);
-    DeleteObject(pen);
-}
-
-void DrawGrassTuft(HDC hdc, float x, float y, COLORREF color) {
-    DrawWorldLine(hdc, {x, y + 8}, {x + 3, y}, 2, color);
-    DrawWorldLine(hdc, {x + 6, y + 8}, {x + 7, y + 1}, 2, color);
-    DrawWorldLine(hdc, {x + 12, y + 8}, {x + 9, y + 2}, 2, color);
-}
-
-void DrawFlower(HDC hdc, float x, float y, COLORREF petal, COLORREF center) {
-    DrawWorldEllipse(hdc, {x - 4, y}, 3, 3, petal, petal);
-    DrawWorldEllipse(hdc, {x + 4, y}, 3, 3, petal, petal);
-    DrawWorldEllipse(hdc, {x, y - 4}, 3, 3, petal, petal);
-    DrawWorldEllipse(hdc, {x, y + 4}, 3, 3, petal, petal);
-    DrawWorldEllipse(hdc, {x, y}, 2, 2, center, center);
-}
-
 void DrawPlayer(HDC hdc) {
     LoadPlayerSprite(hdc);
     if (!g_playerSprite.bitmap || !g_playerSprite.dc) {
@@ -366,34 +429,6 @@ void DrawPlayer(HDC hdc) {
         RGB(255, 0, 255));
 }
 
-void DrawSceneDetails(HDC hdc) {
-    DrawWorldEllipse(hdc, {210.0f, 760.0f}, 170.0f, 92.0f, RGB(88, 164, 190), RGB(54, 94, 114));
-    DrawWorldEllipse(hdc, {205.0f, 748.0f}, 142.0f, 72.0f, RGB(102, 188, 216), RGB(102, 188, 216));
-    DrawWorldEllipse(hdc, {145.0f, 730.0f}, 18.0f, 9.0f, RGB(86, 143, 88), RGB(51, 94, 56));
-    DrawWorldEllipse(hdc, {194.0f, 776.0f}, 22.0f, 12.0f, RGB(86, 143, 88), RGB(51, 94, 56));
-
-    DrawWorldEllipse(hdc, {70.0f, 540.0f}, 92.0f, 76.0f, RGB(54, 111, 80), RGB(36, 73, 55));
-    DrawWorldEllipse(hdc, {120.0f, 495.0f}, 120.0f, 86.0f, RGB(65, 130, 92), RGB(39, 82, 60));
-    DrawWorldEllipse(hdc, {66.0f, 430.0f}, 95.0f, 72.0f, RGB(75, 148, 103), RGB(43, 89, 64));
-
-    for (int i = 0; i < 50; ++i) {
-        const float x = static_cast<float>((i * 157 + 91) % (kMapWidth * kTileSize - 90) + 45);
-        const float y = static_cast<float>((i * 89 + 133) % (kMapHeight * kTileSize - 90) + 45);
-        if (!IsWallTile(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize))) {
-            DrawGrassTuft(hdc, x, y, RGB(132, 206, 154));
-        }
-    }
-
-    constexpr std::array<Vec2, 18> flowers = {{
-        {545, 252}, {612, 310}, {735, 355}, {832, 296}, {900, 520}, {698, 610},
-        {448, 560}, {310, 714}, {385, 746}, {520, 680}, {786, 710}, {1040, 612},
-        {1130, 522}, {1190, 410}, {965, 190}, {300, 300}, {130, 670}, {1060, 744},
-    }};
-    for (int i = 0; i < static_cast<int>(flowers.size()); ++i) {
-        DrawFlower(hdc, flowers[i].x, flowers[i].y, i % 3 == 0 ? RGB(246, 238, 224) : RGB(238, 172, 79), RGB(217, 159, 50));
-    }
-}
-
 void DrawTextLine(HDC hdc, const std::wstring& text, int x, int y, COLORREF color) {
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, color);
@@ -409,10 +444,9 @@ void RenderGame(HWND hwnd, HDC target) {
     HGDIOBJ oldBitmap = SelectObject(hdc, bitmap);
 
     FillRectColor(hdc, client, RGB(41, 49, 47));
+    DrawBackgroundImage(hdc);
 
     rpg::DrawTerrain(hdc, g_game.scene, g_game.camera.x, g_game.camera.y);
-
-    DrawSceneDetails(hdc);
 
     for (const Npc& npc : kNpcs) {
         DrawEllipse(hdc, npc.pos, 15.0f, 19.0f, RGB(222, 185, 94), RGB(76, 55, 32));
@@ -532,6 +566,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_DESTROY:
         KillTimer(hwnd, kFrameTimer);
+        ReleaseBackgroundResources();
+        if (g_gdiplusToken != 0) {
+            Gdiplus::GdiplusShutdown(g_gdiplusToken);
+            g_gdiplusToken = 0;
+        }
         rpg::ReleaseSceneRenderResources();
         rpg::ReleaseTerrainRenderResources();
         if (g_playerSprite.dc) {

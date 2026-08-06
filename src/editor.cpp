@@ -30,6 +30,7 @@ constexpr int kPaletteTabsHeight = 32;
 constexpr int kPaletteFirstY = 100;
 constexpr int kPaletteRowHeight = 56;
 constexpr int kPaletteFooterHeight = 235;
+constexpr int kMinimumMapViewportWidth = 480;
 constexpr int kTileSize = rpg::kTileSize;
 
 #ifndef RPG_ASSET_DIR
@@ -761,12 +762,42 @@ void UpdateFooterButtonLabels() {
 void LayoutFooterButtons(HWND hwnd) {
     RECT client{};
     GetClientRect(hwnd, &client);
+
+    HDWP defer = BeginDeferWindowPos(FooterButtonCount());
     for (int i = 0; i < FooterButtonCount(); ++i) {
         const RECT rect = FooterButtonRect(client, i);
         if (g_footerButtons[i]) {
-            MoveWindow(g_footerButtons[i], rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
+            if (defer) {
+                defer = DeferWindowPos(
+                    defer,
+                    g_footerButtons[i],
+                    nullptr,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+            } else {
+                SetWindowPos(
+                    g_footerButtons[i],
+                    nullptr,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+            }
         }
     }
+    if (defer) {
+        EndDeferWindowPos(defer);
+    }
+
+    RedrawWindow(
+        hwnd,
+        nullptr,
+        nullptr,
+        RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
 void CreateFooterButtons(HWND hwnd) {
@@ -986,10 +1017,6 @@ void MoveSelectedObject(rpg::Vec2 point) {
 }
 
 void PaintTerrainCell(int tx, int ty) {
-    if (rpg::IsWallTile(tx, ty)) {
-        return;
-    }
-
     bool changed = false;
     if (g_editor.mode == EditorMode::Natural) {
         changed = rpg::SetNaturalTerrain(g_editor.scene, tx, ty, g_editor.selectedNatural);
@@ -1266,12 +1293,28 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ClampCamera(hwnd);
         ClampPaletteScroll(hwnd);
         return 0;
+    case WM_GETMINMAXINFO: {
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        RECT minimumWindow{
+            0,
+            0,
+            kPaletteWidth + kMinimumMapViewportWidth,
+            kPaletteFirstY + kPaletteRowHeight + kPaletteFooterHeight,
+        };
+        constexpr DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+        AdjustWindowRectEx(&minimumWindow, windowStyle, FALSE, 0);
+        info->ptMinTrackSize.x = minimumWindow.right - minimumWindow.left;
+        info->ptMinTrackSize.y = minimumWindow.bottom - minimumWindow.top;
+        return 0;
+    }
     case WM_SIZE:
         LayoutFooterButtons(hwnd);
         ClampCamera(hwnd);
         ClampPaletteScroll(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    case WM_ERASEBKGND:
+        return 1;
     case WM_LBUTTONDOWN: {
         SetFocus(hwnd);
         const int x = GET_X_LPARAM(lParam);
@@ -1415,6 +1458,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCmd) {
     const wchar_t kClassName[] = L"FreeWalkRpgSceneEditorWindow";
 
     WNDCLASSW wc{};
+    wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = instance;
     wc.lpszClassName = kClassName;

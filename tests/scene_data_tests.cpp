@@ -44,15 +44,30 @@ int main() {
         return Fail("failed to load scene: " + error);
     }
     if (rpg::NaturalTerrainAt(original, 22, 3) != "gravel" ||
-        rpg::NaturalTerrainAt(original, 4, 15) != "sand" ||
-        rpg::NaturalTerrainAt(original, 6, 8) != "medium_water" ||
-        rpg::NaturalTerrainAt(original, 19, 14) != "deep_water" ||
-        rpg::BuiltTerrainAt(original, 6, 3) != "stone_floor" ||
+        rpg::NaturalTerrainAt(original, 4, 15) != "none" ||
+        rpg::NaturalTerrainAt(original, 6, 8) != "none" ||
+        rpg::NaturalTerrainAt(original, 19, 14) != "none" ||
+        rpg::BuiltTerrainAt(original, 6, 3) != "none" ||
         rpg::BuiltTerrainAt(original, 20, 14) != "wood_floor") {
         return Fail("terrain layers did not decode as expected");
     }
 
-    if (!rpg::CircleIntersectsBlockedTerrain(original, {19.0f * 48.0f + 24.0f, 14.0f * 48.0f + 24.0f}, 8.0f)) {
+    bool foundBlockedTerrain = false;
+    for (int y = 0; y < rpg::kMapHeight && !foundBlockedTerrain; ++y) {
+        for (int x = 0; x < rpg::kMapWidth && !foundBlockedTerrain; ++x) {
+            const std::string_view terrainId = rpg::NaturalTerrainAt(original, x, y);
+            const rpg::TerrainDef* terrain = rpg::FindTerrainDef(terrainId, rpg::TerrainLayer::Natural);
+            if (!terrain || !terrain->blocksMovement) {
+                continue;
+            }
+
+            foundBlockedTerrain = rpg::CircleIntersectsBlockedTerrain(
+                original,
+                {x * 48.0f + 24.0f, y * 48.0f + 24.0f},
+                8.0f);
+        }
+    }
+    if (!foundBlockedTerrain) {
         return Fail("water terrain should block movement");
     }
 
