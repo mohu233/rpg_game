@@ -70,10 +70,13 @@ struct SceneObjectDef {
     float height = 48.0f;
     float zOffset = 0.0f;
     CollisionBody collision;
+    bool placeable = true;
+    std::string companionType;
 };
 
 struct SceneObject {
     std::string id;
+    std::string groupId;
     std::string type;
     Vec2 pos;
     float zOffset = 0.0f;
@@ -112,6 +115,7 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
 RectF ObjectVisualBounds(const SceneObject& object);
 RectF ObjectCollisionRect(const SceneObject& object);
 float ObjectSortY(const SceneObject& object);
+bool ObjectIsGroundOverlay(const SceneObject& object);
 bool PointInObjectVisual(const SceneObject& object, Vec2 point);
 bool CircleIntersectsScene(const Scene& scene, Vec2 center, float radius);
 bool CircleIntersectsBlockedTerrain(const Scene& scene, Vec2 center, float radius, bool canTraverseWater = false);

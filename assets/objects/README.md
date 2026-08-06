@@ -36,6 +36,11 @@ Example `object.json`:
 numbers, underscores, and hyphens. `image` must point to a BMP inside the same
 module directory. BMP transparency uses the color `#ff00ff`.
 
+Optional `placeable: false` hides a module from the editor palette while still
+allowing scenes to load it. Optional `companion_type` names another object type
+that the editor should place together with this object; both scene objects share
+one group so they move and delete together.
+
 Supported collision shapes are `none`, `rect`, and `circle`. For a circle,
 `x` and `y` are offsets from the object's bottom-center origin and `radius`
 sets its size. New scene files store only object placement and the module

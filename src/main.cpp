@@ -448,11 +448,6 @@ void RenderGame(HWND hwnd, HDC target) {
 
     rpg::DrawTerrain(hdc, g_game.scene, g_game.camera.x, g_game.camera.y);
 
-    for (const Npc& npc : kNpcs) {
-        DrawEllipse(hdc, npc.pos, 15.0f, 19.0f, RGB(222, 185, 94), RGB(76, 55, 32));
-        DrawTextLine(hdc, npc.name, static_cast<int>(npc.pos.x - g_game.camera.x - 18), static_cast<int>(npc.pos.y - g_game.camera.y - 38), RGB(245, 244, 230));
-    }
-
     std::vector<const rpg::SceneObject*> objects;
     objects.reserve(g_game.scene.objects.size());
     for (const rpg::SceneObject& object : g_game.scene.objects) {
@@ -464,7 +459,18 @@ void RenderGame(HWND hwnd, HDC target) {
 
     const float playerSortY = g_game.player.pos.y;
     for (const rpg::SceneObject* object : objects) {
-        if (rpg::ObjectSortY(*object) <= playerSortY) {
+        if (rpg::ObjectIsGroundOverlay(*object)) {
+            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y);
+        }
+    }
+
+    for (const Npc& npc : kNpcs) {
+        DrawEllipse(hdc, npc.pos, 15.0f, 19.0f, RGB(222, 185, 94), RGB(76, 55, 32));
+        DrawTextLine(hdc, npc.name, static_cast<int>(npc.pos.x - g_game.camera.x - 18), static_cast<int>(npc.pos.y - g_game.camera.y - 38), RGB(245, 244, 230));
+    }
+
+    for (const rpg::SceneObject* object : objects) {
+        if (!rpg::ObjectIsGroundOverlay(*object) && rpg::ObjectSortY(*object) <= playerSortY) {
             rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y);
         }
     }
@@ -472,7 +478,7 @@ void RenderGame(HWND hwnd, HDC target) {
     DrawPlayer(hdc);
 
     for (const rpg::SceneObject* object : objects) {
-        if (rpg::ObjectSortY(*object) > playerSortY) {
+        if (!rpg::ObjectIsGroundOverlay(*object) && rpg::ObjectSortY(*object) > playerSortY) {
             rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y);
         }
     }

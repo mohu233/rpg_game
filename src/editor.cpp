@@ -684,6 +684,16 @@ rpg::Vec2 ScreenToWorld(int x, int y) {
     };
 }
 
+std::vector<const rpg::SceneObjectDef*> PlaceableObjectDefs() {
+    std::vector<const rpg::SceneObjectDef*> defs;
+    for (const rpg::SceneObjectDef& def : rpg::ObjectDefs()) {
+        if (def.placeable) {
+            defs.push_back(&def);
+        }
+    }
+    return defs;
+}
+
 int PaletteItemCount() {
     switch (g_editor.mode) {
     case EditorMode::Natural:
@@ -692,7 +702,7 @@ int PaletteItemCount() {
         return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 1;
     case EditorMode::Objects:
     default:
-        return static_cast<int>(rpg::ObjectDefs().size());
+        return static_cast<int>(PlaceableObjectDefs().size());
     }
 }
 
@@ -870,9 +880,10 @@ void LoadEditorScene() {
     std::string terrainError;
     const bool terrainLoaded = rpg::ReloadTerrainDefs(&terrainError);
 
-    const auto& defs = rpg::ObjectDefs();
-    if (!defs.empty() && !rpg::FindObjectDef(g_editor.selectedType)) {
-        g_editor.selectedType = defs.front().type;
+    const auto objectDefs = PlaceableObjectDefs();
+    const rpg::SceneObjectDef* selectedDef = rpg::FindObjectDef(g_editor.selectedType);
+    if (!objectDefs.empty() && (!selectedDef || !selectedDef->placeable)) {
+        g_editor.selectedType = objectDefs.front()->type;
     }
     const auto& naturalDefs = rpg::NaturalTerrainDefs();
     if (g_editor.selectedNatural != "none" && !naturalDefs.empty() &&
@@ -951,7 +962,8 @@ bool ClearBackgroundImage() {
 }
 
 void AddObjectAt(rpg::Vec2 point) {
-    if (!rpg::FindObjectDef(g_editor.selectedType)) {
+    const rpg::SceneObjectDef* def = rpg::FindObjectDef(g_editor.selectedType);
+    if (!def || !def->placeable) {
         g_editor.status = L"未选择有效对象类型";
         return;
     }
@@ -960,8 +972,22 @@ void AddObjectAt(rpg::Vec2 point) {
     point.y = Clamp(point.y, 0.0f, rpg::WorldHeight());
 
     rpg::SceneObject object = rpg::MakeObject(g_editor.selectedType, point, g_editor.nextObjectId++);
+    const std::string groupId = object.id;
+    if (!def->companionType.empty() && rpg::FindObjectDef(def->companionType)) {
+        object.groupId = groupId;
+    }
+
     g_editor.scene.objects.push_back(object);
     g_editor.selectedObject = static_cast<int>(g_editor.scene.objects.size()) - 1;
+    if (!def->companionType.empty()) {
+        if (rpg::FindObjectDef(def->companionType)) {
+            rpg::SceneObject companion = rpg::MakeObject(def->companionType, point, g_editor.nextObjectId++);
+            companion.groupId = groupId;
+            g_editor.scene.objects.push_back(companion);
+        } else {
+            g_editor.status = L"伴随对象未找到";
+        }
+    }
     g_editor.dragging = true;
     g_editor.dragStartWorld = point;
     g_editor.dragStartObject = point;
@@ -972,7 +998,16 @@ void DeleteSelectedObject() {
     if (g_editor.selectedObject < 0 || g_editor.selectedObject >= static_cast<int>(g_editor.scene.objects.size())) {
         return;
     }
-    g_editor.scene.objects.erase(g_editor.scene.objects.begin() + g_editor.selectedObject);
+    const std::string groupId = g_editor.scene.objects[g_editor.selectedObject].groupId;
+    if (!groupId.empty()) {
+        for (int i = static_cast<int>(g_editor.scene.objects.size()) - 1; i >= 0; --i) {
+            if (g_editor.scene.objects[i].groupId == groupId) {
+                g_editor.scene.objects.erase(g_editor.scene.objects.begin() + i);
+            }
+        }
+    } else {
+        g_editor.scene.objects.erase(g_editor.scene.objects.begin() + g_editor.selectedObject);
+    }
     g_editor.selectedObject = -1;
     MarkDirty(L"已删除对象");
 }
@@ -1011,8 +1046,21 @@ void MoveSelectedObject(rpg::Vec2 point) {
 
     rpg::Vec2 delta{point.x - g_editor.dragStartWorld.x, point.y - g_editor.dragStartWorld.y};
     rpg::SceneObject& object = g_editor.scene.objects[g_editor.selectedObject];
-    object.pos.x = Clamp(g_editor.dragStartObject.x + delta.x, 0.0f, rpg::WorldWidth());
-    object.pos.y = Clamp(g_editor.dragStartObject.y + delta.y, 0.0f, rpg::WorldHeight());
+    const float targetX = Clamp(g_editor.dragStartObject.x + delta.x, 0.0f, rpg::WorldWidth());
+    const float targetY = Clamp(g_editor.dragStartObject.y + delta.y, 0.0f, rpg::WorldHeight());
+    const rpg::Vec2 appliedDelta{targetX - object.pos.x, targetY - object.pos.y};
+    const std::string groupId = object.groupId;
+    if (!groupId.empty()) {
+        for (rpg::SceneObject& grouped : g_editor.scene.objects) {
+            if (grouped.groupId == groupId) {
+                grouped.pos.x = Clamp(grouped.pos.x + appliedDelta.x, 0.0f, rpg::WorldWidth());
+                grouped.pos.y = Clamp(grouped.pos.y + appliedDelta.y, 0.0f, rpg::WorldHeight());
+            }
+        }
+    } else {
+        object.pos.x = targetX;
+        object.pos.y = targetY;
+    }
     MarkDirty(L"已移动对象");
 }
 
@@ -1102,7 +1150,7 @@ void DrawPalette(HDC hdc, const RECT& client) {
         DrawTextLine(hdc, tabNames[i], tab.left + 5, tab.top + 8, selected ? RGB(248, 245, 220) : RGB(185, 193, 188));
     }
 
-    const auto& defs = rpg::ObjectDefs();
+    const auto objectDefs = PlaceableObjectDefs();
     SaveDC(hdc);
     IntersectClipRect(hdc, 0, kPaletteFirstY, kPaletteWidth, std::max<LONG>(kPaletteFirstY, client.bottom - kPaletteFooterHeight));
     for (int i = 0; i < PaletteItemCount(); ++i) {
@@ -1112,8 +1160,8 @@ void DrawPalette(HDC hdc, const RECT& client) {
         bool showSwatch = false;
 
         if (g_editor.mode == EditorMode::Objects) {
-            selected = defs[i].type == g_editor.selectedType;
-            label = defs[i].displayName;
+            selected = objectDefs[i]->type == g_editor.selectedType;
+            label = objectDefs[i]->displayName;
         } else if (g_editor.mode == EditorMode::Natural) {
             if (i == 0) {
                 selected = g_editor.selectedNatural == "none";
@@ -1176,6 +1224,20 @@ void DrawSceneObjects(HDC hdc) {
     });
 
     for (int index : indices) {
+        if (rpg::ObjectIsGroundOverlay(g_editor.scene.objects[index])) {
+            rpg::DrawSceneObject(
+                hdc,
+                g_editor.scene.objects[index],
+                g_editor.cameraX - kPaletteWidth,
+                g_editor.cameraY,
+                index == g_editor.selectedObject);
+        }
+    }
+
+    for (int index : indices) {
+        if (rpg::ObjectIsGroundOverlay(g_editor.scene.objects[index])) {
+            continue;
+        }
         rpg::DrawSceneObject(
             hdc,
             g_editor.scene.objects[index],
@@ -1340,7 +1402,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         if (const int hit = PaletteHitTest(hwnd, x, y); hit >= 0) {
             if (g_editor.mode == EditorMode::Objects) {
-                g_editor.selectedType = rpg::ObjectDefs()[hit].type;
+                const auto objectDefs = PlaceableObjectDefs();
+                if (hit < static_cast<int>(objectDefs.size())) {
+                    g_editor.selectedType = objectDefs[hit]->type;
+                }
             } else if (g_editor.mode == EditorMode::Natural) {
                 if (hit == 0) {
                     g_editor.selectedNatural = "none";

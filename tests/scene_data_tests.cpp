@@ -28,8 +28,10 @@ int main() {
     if (!rpg::ReloadObjectDefs(&error)) {
         return Fail("failed to load object modules: " + error);
     }
-    if (rpg::ObjectDefs().size() != 3) {
-        return Fail("expected three object modules");
+    if (!rpg::FindObjectDef("tree_oak") ||
+        !rpg::FindObjectDef("stone_round") ||
+        !rpg::FindObjectDef("bush")) {
+        return Fail("missing one of the built-in object modules");
     }
     if (!rpg::ReloadTerrainDefs(&error)) {
         return Fail("failed to load terrain modules: " + error);

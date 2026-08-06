@@ -1,0 +1,18 @@
+{
+  "type": "exotic_tree_01_shadow",
+  "display_name": "特异树木 阴影",
+  "image": "exotic_tree_01_shadow.bmp",
+  "width": 251.0,
+  "height": 272.0,
+  "z_offset": -0.5,
+  "placeable": false,
+  "collision": {
+    "shape": "none",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 0.0,
+    "h": 0.0,
+    "radius": 0.0,
+    "blocks": false
+  }
+}

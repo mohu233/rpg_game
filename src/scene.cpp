@@ -424,6 +424,12 @@ bool LoadObjectDef(
     def.height = FindFloatField(text, "height").value_or(48.0f);
     def.zOffset = FindFloatField(text, "z_offset").value_or(0.0f);
     def.collision = ParseCollision(text, nullptr);
+    def.placeable = FindBoolField(text, "placeable").value_or(true);
+    def.companionType = FindStringField(text, "companion_type").value_or("");
+    if (!def.companionType.empty() && !IsValidObjectType(def.companionType)) {
+        error = "companion_type must contain only letters, numbers, '-' or '_'";
+        return false;
+    }
 
     if (def.width <= 0.0f || def.height <= 0.0f) {
         error = "width and height must be greater than zero";
@@ -820,6 +826,7 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
         const SceneObjectDef* def = FindObjectDef(*type);
         SceneObject object;
         object.id = FindStringField(block, "id").value_or("obj_" + std::to_string(index));
+        object.groupId = FindStringField(block, "group").value_or("");
         object.type = *type;
         object.pos = {*x, *y};
         object.zOffset = FindFloatField(block, "z").value_or(def ? def->zOffset : 0.0f);
@@ -894,6 +901,9 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
         const SceneObject& object = scene.objects[i];
         out << "    {\n";
         out << "      \"id\": \"" << object.id << "\",\n";
+        if (!object.groupId.empty()) {
+            out << "      \"group\": \"" << object.groupId << "\",\n";
+        }
         out << "      \"type\": \"" << object.type << "\",\n";
         out << "      \"x\": " << object.pos.x << ",\n";
         out << "      \"y\": " << object.pos.y << "\n";
@@ -932,6 +942,10 @@ RectF ObjectCollisionRect(const SceneObject& object) {
 
 float ObjectSortY(const SceneObject& object) {
     return object.pos.y + object.zOffset;
+}
+
+bool ObjectIsGroundOverlay(const SceneObject& object) {
+    return object.zOffset < 0.0f;
 }
 
 bool PointInObjectVisual(const SceneObject& object, Vec2 point) {
