@@ -52,6 +52,10 @@ function(configure_rpg_target target_name)
     )
 
     if(MINGW)
+        if(target_name STREQUAL "FreeWalkRpgDemo")
+            target_link_options(${target_name} PRIVATE -municode)
+        endif()
+
         get_filename_component(RPG_MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
         foreach(runtime_dll IN ITEMS libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
             add_custom_command(TARGET ${target_name} POST_BUILD

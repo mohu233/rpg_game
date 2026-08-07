@@ -290,6 +290,8 @@ int ReadEditInt(HWND edit, int fallback) {
     }
 }
 
+
+
 bool CreateGridSizeControls(HWND hwnd, GridSizeDialogState& state) {
     const HINSTANCE instance = GetModuleHandleW(nullptr);
     DebugTraceAscii("grid:controls-begin hwnd=" + std::to_string(static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(hwnd))));

@@ -25,7 +25,6 @@ constexpr float kPlayerSpeed = 190.0f;
 constexpr int kSpriteFrameSize = 96;
 constexpr int kSpriteDrawSize = 96;
 constexpr int kSideWalkFrames = 8;
-constexpr int kCardinalWalkFrames = 4;
 constexpr UINT_PTR kFrameTimer = 1;
 constexpr UINT kFrameMs = 16;
 
@@ -358,23 +357,13 @@ void DrawPlayer(HDC hdc) {
     }
 
     const bool moving = std::fabs(g_game.player.vel.x) + std::fabs(g_game.player.vel.y) > 1.0f;
-    const bool sideWalk = g_game.player.dir == 1 || g_game.player.dir == 2;
-    const int frameCount = sideWalk ? kSideWalkFrames : kCardinalWalkFrames;
+    // The current player sheet contains only the eight side-run frames.
+    const int frameCount = kSideWalkFrames;
     const int frame = moving ? (static_cast<int>(g_game.player.animTime * 10.0f) % frameCount) : 0;
     const bool mirror = g_game.player.dir == 1;
 
-    int sx = 0;
-    int sy = 0;
-    if (sideWalk) {
-        sx = (frame % 4) * kSpriteFrameSize;
-        sy = (frame / 4) * kSpriteFrameSize;
-    } else if (g_game.player.dir == 0) {
-        sx = frame * kSpriteFrameSize;
-        sy = 2 * kSpriteFrameSize;
-    } else {
-        sx = frame * kSpriteFrameSize;
-        sy = 3 * kSpriteFrameSize;
-    }
+    const int sx = (frame % 4) * kSpriteFrameSize;
+    const int sy = (frame / 4) * kSpriteFrameSize;
 
     const int dx = static_cast<int>(std::round(g_game.player.pos.x - g_game.camera.x - kSpriteDrawSize * 0.5f));
     const int dy = static_cast<int>(std::round(g_game.player.pos.y - g_game.camera.y - kSpriteDrawSize + 12));
