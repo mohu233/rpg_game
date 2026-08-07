@@ -29,7 +29,7 @@ constexpr int kPaletteTabsY = 52;
 constexpr int kPaletteTabsHeight = 32;
 constexpr int kPaletteFirstY = 100;
 constexpr int kPaletteRowHeight = 56;
-constexpr int kPaletteFooterHeight = 270;
+constexpr int kPaletteFooterHeight = 350;
 constexpr int kMinimumMapViewportWidth = 480;
 constexpr int kTileSize = rpg::kTileSize;
 
@@ -38,18 +38,22 @@ constexpr int kTileSize = rpg::kTileSize;
 #endif
 
 enum class EditorMode {
+    Maps,
     Objects,
     Natural,
     Built,
 };
 
 enum class FooterAction {
+    CreateMap,
+    DeleteMap,
     LoadScene,
     SaveSceneAs,
     LoadBackground,
     ClearBackground,
     ExportBlankMap,
     SaveScene,
+    LinkTeleport,
     DeleteObject,
     ToggleCollision,
 };
@@ -60,12 +64,15 @@ struct FooterButtonDef {
 };
 
 constexpr FooterButtonDef kFooterButtons[] = {
+    {FooterAction::CreateMap, L"创建地图  N"},
+    {FooterAction::DeleteMap, L"删除地图"},
     {FooterAction::LoadScene, L"Load Scene"},
     {FooterAction::SaveSceneAs, L"Save Scene As"},
     {FooterAction::LoadBackground, L"载入底图  L"},
     {FooterAction::ClearBackground, L"清除底图  Shift+L"},
     {FooterAction::ExportBlankMap, L"导出空白图  B"},
     {FooterAction::SaveScene, L"保存  Ctrl+S"},
+    {FooterAction::LinkTeleport, L"连接传送点  T"},
     {FooterAction::DeleteObject, L"删除对象  Delete"},
     {FooterAction::ToggleCollision, L"碰撞开关  C"},
 };
@@ -83,9 +90,17 @@ struct BitmapCache {
     bool attempted = false;
 };
 
+struct MapEntry {
+    std::filesystem::path path;
+    std::wstring displayName;
+    int width = rpg::kMapWidth;
+    int height = rpg::kMapHeight;
+    bool hasPlayerStart = false;
+};
+
 struct EditorState {
     rpg::Scene scene;
-    EditorMode mode = EditorMode::Objects;
+    EditorMode mode = EditorMode::Maps;
     std::string selectedType = "tree_oak";
     std::string selectedNatural = "grass";
     std::string selectedBuilt = "stone_floor";
@@ -105,6 +120,11 @@ struct EditorState {
     float panStartCameraX = 0.0f;
     float panStartCameraY = 0.0f;
     std::filesystem::path scenePath;
+    std::vector<MapEntry> maps;
+    int selectedMap = -1;
+    bool linkingTeleport = false;
+    std::filesystem::path linkSourceScene;
+    std::string linkSourceId;
     int paletteScroll = 0;
     rpg::Vec2 dragStartWorld{};
     rpg::Vec2 dragStartObject{};
@@ -119,6 +139,56 @@ HWND g_footerButtons[static_cast<int>(sizeof(kFooterButtons) / sizeof(kFooterBut
 
 std::filesystem::path AssetPath(const wchar_t* relative) {
     return std::filesystem::path(RPG_ASSET_DIR) / relative;
+}
+
+std::wstring MapDisplayName(const std::filesystem::path& path) {
+    std::wstring name = path.stem().wstring();
+    std::replace(name.begin(), name.end(), L'_', L' ');
+    return name.empty() ? path.filename().wstring() : name;
+}
+
+int MapIndexForPath(const std::filesystem::path& path) {
+    const std::filesystem::path normalized = path.lexically_normal();
+    for (int i = 0; i < static_cast<int>(g_editor.maps.size()); ++i) {
+        if (g_editor.maps[i].path.lexically_normal() == normalized) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void RefreshMapCatalog() {
+    g_editor.maps.clear();
+    const std::filesystem::path root = AssetPath(L"maps");
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec)) {
+        g_editor.selectedMap = -1;
+        return;
+    }
+
+    std::vector<std::filesystem::path> paths;
+    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file() && it->path().extension() == L".json") {
+            paths.push_back(it->path());
+        }
+    }
+    std::sort(paths.begin(), paths.end());
+
+    for (const std::filesystem::path& path : paths) {
+        MapEntry entry;
+        entry.path = path;
+        rpg::Scene probe;
+        std::string error;
+        if (rpg::LoadSceneFromFile(path, probe, &error)) {
+            entry.width = probe.mapWidth;
+            entry.height = probe.mapHeight;
+            entry.hasPlayerStart = probe.hasPlayerStart;
+        }
+        entry.displayName = MapDisplayName(path) + L"  " + std::to_wstring(entry.width) + L"x" + std::to_wstring(entry.height);
+        g_editor.maps.push_back(std::move(entry));
+    }
+
+    g_editor.selectedMap = MapIndexForPath(g_editor.scenePath);
 }
 
 float Clamp(float value, float minValue, float maxValue) {
@@ -406,14 +476,14 @@ std::vector<BYTE> BuildGridSizeDialogTemplate(const GridSizeDialogState& state) 
 
     AppendDialogWord(data, 0);
     AppendDialogWord(data, 0);
-    AppendDialogString(data, L"空白地图格子数");
+    AppendDialogString(data, L"地图尺寸（格子）");
     AppendDialogWord(data, 9);
     AppendDialogString(data, L"Segoe UI");
 
-    AppendDialogItem(data, WS_CHILD | WS_VISIBLE, 0, 8, 12, 40, 12, 10, 0x0082, L"列数");
+    AppendDialogItem(data, WS_CHILD | WS_VISIBLE, 0, 8, 12, 40, 12, 10, 0x0082, L"宽度");
     AppendDialogItem(data, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
                      WS_EX_CLIENTEDGE, 56, 9, 110, 16, 1001, 0x0081, std::to_wstring(state.columns).c_str());
-    AppendDialogItem(data, WS_CHILD | WS_VISIBLE, 0, 8, 38, 40, 12, 11, 0x0082, L"行数");
+    AppendDialogItem(data, WS_CHILD | WS_VISIBLE, 0, 8, 38, 40, 12, 11, 0x0082, L"高度");
     AppendDialogItem(data, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
                      WS_EX_CLIENTEDGE, 56, 35, 110, 16, 1002, 0x0081, std::to_wstring(state.rows).c_str());
     AppendDialogItem(data, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
@@ -632,8 +702,8 @@ bool DrawBackgroundImage(HDC hdc) {
 
     const int destX = static_cast<int>(std::round(kPaletteWidth - g_editor.cameraX));
     const int destY = static_cast<int>(std::round(-g_editor.cameraY));
-    const int destW = static_cast<int>(std::round(rpg::WorldWidth() * g_editor.zoom));
-    const int destH = static_cast<int>(std::round(rpg::WorldHeight() * g_editor.zoom));
+    const int destW = static_cast<int>(std::round(rpg::SceneWorldWidth(g_editor.scene) * g_editor.zoom));
+    const int destH = static_cast<int>(std::round(rpg::SceneWorldHeight(g_editor.scene) * g_editor.zoom));
 
     graphics.DrawImage(
         bitmap,
@@ -726,8 +796,8 @@ void ClampCamera(HWND hwnd) {
     GetClientRect(hwnd, &client);
     const float viewportW = static_cast<float>(std::max<LONG>(1, client.right - kPaletteWidth));
     const float viewportH = static_cast<float>(std::max<LONG>(1, client.bottom));
-    g_editor.cameraX = Clamp(g_editor.cameraX, 0.0f, std::max(0.0f, rpg::WorldWidth() * g_editor.zoom - viewportW));
-    g_editor.cameraY = Clamp(g_editor.cameraY, 0.0f, std::max(0.0f, rpg::WorldHeight() * g_editor.zoom - viewportH));
+    g_editor.cameraX = Clamp(g_editor.cameraX, 0.0f, std::max(0.0f, rpg::SceneWorldWidth(g_editor.scene) * g_editor.zoom - viewportW));
+    g_editor.cameraY = Clamp(g_editor.cameraY, 0.0f, std::max(0.0f, rpg::SceneWorldHeight(g_editor.scene) * g_editor.zoom - viewportH));
 }
 
 rpg::Vec2 ScreenToWorld(int x, int y) {
@@ -749,6 +819,8 @@ std::vector<const rpg::SceneObjectDef*> PlaceableObjectDefs() {
 
 int PaletteItemCount() {
     switch (g_editor.mode) {
+    case EditorMode::Maps:
+        return static_cast<int>(g_editor.maps.size());
     case EditorMode::Natural:
         return static_cast<int>(rpg::NaturalTerrainDefs().size()) + 1;
     case EditorMode::Built:
@@ -763,8 +835,8 @@ int PaletteTabHitTest(int x, int y) {
     if (x < 8 || x >= kPaletteWidth - 8 || y < kPaletteTabsY || y >= kPaletteTabsY + kPaletteTabsHeight) {
         return -1;
     }
-    const int tabWidth = (kPaletteWidth - 16) / 3;
-    return std::min(2, (x - 8) / tabWidth);
+    const int tabWidth = (kPaletteWidth - 16) / 4;
+    return std::min(3, (x - 8) / tabWidth);
 }
 
 void ClampPaletteScroll(HWND hwnd) {
@@ -961,6 +1033,7 @@ bool LoadEditorSceneFromPath(const std::filesystem::path& scenePath) {
     g_editor.selectedObject = -1;
     g_editor.nextObjectId = static_cast<int>(g_editor.scene.objects.size()) + 1;
     g_editor.scenePath = scenePath;
+    g_editor.selectedMap = MapIndexForPath(scenePath);
     g_editor.cameraX = 0.0f;
     g_editor.cameraY = 0.0f;
     g_editor.dirty = false;
@@ -984,7 +1057,24 @@ void SetZoomAt(HWND hwnd, int screenX, int screenY, float factor) {
 }
 
 void LoadEditorScene() {
-    LoadEditorSceneFromPath(g_editor.scenePath.empty() ? AssetPath(L"scenes/demo_scene.json") : g_editor.scenePath);
+    RefreshMapCatalog();
+    std::filesystem::path path = g_editor.scenePath;
+    if (path.empty() || !std::filesystem::is_regular_file(path)) {
+        path.clear();
+        for (const MapEntry& map : g_editor.maps) {
+            if (map.hasPlayerStart) {
+                path = map.path;
+                break;
+            }
+        }
+        if (path.empty() && !g_editor.maps.empty()) {
+            path = g_editor.maps.front().path;
+        }
+    }
+    if (path.empty()) {
+        path = AssetPath(L"maps/demo_scene.json");
+    }
+    LoadEditorSceneFromPath(path);
 }
 
 void SaveEditorScene() {
@@ -995,6 +1085,168 @@ void SaveEditorScene() {
     } else {
         g_editor.status = L"保存失败";
     }
+}
+
+std::filesystem::path NextMapPath() {
+    const std::filesystem::path root = AssetPath(L"maps");
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    for (int index = 1; index < 10000; ++index) {
+        const std::filesystem::path candidate = root / (L"new_map_" + std::to_wstring(index) + L".json");
+        if (!std::filesystem::exists(candidate, ec)) {
+            return candidate;
+        }
+    }
+    return root / L"new_map.json";
+}
+
+void CreateMap(HWND hwnd) {
+    GridSize size;
+    if (!PromptGridSize(hwnd, size)) {
+        return;
+    }
+    size.columns = std::clamp(size.columns, 1, 256);
+    size.rows = std::clamp(size.rows, 1, 256);
+
+    rpg::Scene scene;
+    scene.mapWidth = size.columns;
+    scene.mapHeight = size.rows;
+    scene.naturalTerrain.assign(scene.mapWidth * scene.mapHeight, "grass");
+    scene.builtTerrain.assign(scene.mapWidth * scene.mapHeight, "none");
+    scene.playerStart = {
+        rpg::SceneWorldWidth(scene) * 0.5f,
+        rpg::SceneWorldHeight(scene) * 0.5f,
+    };
+    scene.hasPlayerStart = true;
+
+    const std::filesystem::path path = NextMapPath();
+    std::string error;
+    if (!rpg::SaveSceneToFile(path, scene, &error)) {
+        g_editor.status = L"创建地图失败";
+        return;
+    }
+
+    RefreshMapCatalog();
+    LoadEditorSceneFromPath(path);
+    g_editor.status = L"已创建地图 " + path.stem().wstring();
+}
+
+void DeleteMap(HWND hwnd) {
+    const int mapIndex = MapIndexForPath(g_editor.scenePath);
+    if (mapIndex < 0 || mapIndex >= static_cast<int>(g_editor.maps.size())) {
+        g_editor.status = L"当前不是地图目录中的地图";
+        return;
+    }
+    if (g_editor.maps.size() <= 1) {
+        g_editor.status = L"至少保留一张地图";
+        return;
+    }
+
+    const std::wstring name = g_editor.maps[mapIndex].displayName;
+    const std::wstring prompt = L"确定删除地图“" + name + L"”？\n此操作不可撤销。";
+    if (MessageBoxW(hwnd, prompt.c_str(), L"删除地图", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+        return;
+    }
+
+    const std::filesystem::path path = g_editor.scenePath;
+    std::error_code ec;
+    if (!std::filesystem::remove(path, ec) || ec) {
+        g_editor.status = L"删除地图失败";
+        return;
+    }
+
+    RefreshMapCatalog();
+    LoadEditorSceneFromPath(g_editor.maps.front().path);
+    g_editor.status = L"已删除地图 " + name;
+}
+
+std::string StoreScenePath(const std::filesystem::path& path) {
+    return std::filesystem::path(StoreBackgroundPath(path)).generic_u8string();
+}
+
+void BeginTeleportLink() {
+    if (g_editor.selectedObject < 0 || g_editor.selectedObject >= static_cast<int>(g_editor.scene.objects.size())) {
+        g_editor.status = L"请先选择传送点";
+        return;
+    }
+
+    const rpg::SceneObject& source = g_editor.scene.objects[g_editor.selectedObject];
+    if (!rpg::ObjectIsTeleport(source)) {
+        g_editor.status = L"当前对象不是传送点";
+        return;
+    }
+
+    if (g_editor.dirty) {
+        SaveEditorScene();
+    }
+    g_editor.linkingTeleport = true;
+    g_editor.linkSourceScene = g_editor.scenePath;
+    g_editor.linkSourceId = source.id;
+    g_editor.mode = EditorMode::Maps;
+    g_editor.paletteScroll = 0;
+    g_editor.status = L"请选择目标地图，再点击目标传送点";
+}
+
+void CompleteTeleportLink(int targetIndex) {
+    if (!g_editor.linkingTeleport || targetIndex < 0 ||
+        targetIndex >= static_cast<int>(g_editor.scene.objects.size())) {
+        return;
+    }
+
+    rpg::SceneObject& target = g_editor.scene.objects[targetIndex];
+    if (!rpg::ObjectIsTeleport(target)) {
+        g_editor.status = L"目标对象不是传送点";
+        return;
+    }
+
+    const std::filesystem::path sourceScene = g_editor.linkSourceScene;
+    const std::string sourceId = g_editor.linkSourceId;
+    if (sourceScene.lexically_normal() == g_editor.scenePath.lexically_normal() && sourceId == target.id) {
+        g_editor.status = L"不能连接到传送点自身";
+        return;
+    }
+
+    const std::string targetScenePath = StoreScenePath(g_editor.scenePath);
+    target.targetScene = StoreScenePath(sourceScene);
+    target.targetId = sourceId;
+
+    bool sourceUpdated = false;
+    if (sourceScene.lexically_normal() == g_editor.scenePath.lexically_normal()) {
+        for (rpg::SceneObject& source : g_editor.scene.objects) {
+            if (source.id == sourceId && rpg::ObjectIsTeleport(source)) {
+                source.targetScene = targetScenePath;
+                source.targetId = target.id;
+                sourceUpdated = true;
+                break;
+            }
+        }
+    } else {
+        rpg::Scene sourceSceneData;
+        std::string error;
+        if (rpg::LoadSceneFromFile(sourceScene, sourceSceneData, &error)) {
+            for (rpg::SceneObject& source : sourceSceneData.objects) {
+                if (source.id == sourceId && rpg::ObjectIsTeleport(source)) {
+                    source.targetScene = targetScenePath;
+                    source.targetId = target.id;
+                    sourceUpdated = rpg::SaveSceneToFile(sourceScene, sourceSceneData, &error);
+                    break;
+                }
+            }
+        }
+    }
+
+    std::string targetError;
+    if (!sourceUpdated || !rpg::SaveSceneToFile(g_editor.scenePath, g_editor.scene, &targetError)) {
+        g_editor.status = L"传送点连接保存失败";
+        return;
+    }
+
+    g_editor.dirty = false;
+    g_editor.linkingTeleport = false;
+    g_editor.linkSourceScene.clear();
+    g_editor.linkSourceId.clear();
+    g_editor.selectedObject = targetIndex;
+    g_editor.status = L"传送点已双向连接";
 }
 
 void LoadSceneDialog(HWND hwnd) {
@@ -1051,8 +1303,8 @@ void AddObjectAt(rpg::Vec2 point) {
         return;
     }
 
-    point.x = Clamp(point.x, 0.0f, rpg::WorldWidth());
-    point.y = Clamp(point.y, 0.0f, rpg::WorldHeight());
+    point.x = Clamp(point.x, 0.0f, rpg::SceneWorldWidth(g_editor.scene));
+    point.y = Clamp(point.y, 0.0f, rpg::SceneWorldHeight(g_editor.scene));
 
     rpg::SceneObject object = rpg::MakeObject(g_editor.selectedType, point, g_editor.nextObjectId++);
     const std::string groupId = object.id;
@@ -1099,6 +1351,12 @@ void RunFooterAction(HWND hwnd, FooterAction action) {
     DebugTrace(L"[RunFooterAction] action=" + std::to_wstring(static_cast<int>(action)));
     DebugTraceAscii("footer:action=" + std::to_string(static_cast<int>(action)));
     switch (action) {
+    case FooterAction::CreateMap:
+        CreateMap(hwnd);
+        break;
+    case FooterAction::DeleteMap:
+        DeleteMap(hwnd);
+        break;
     case FooterAction::LoadScene:
         LoadSceneDialog(hwnd);
         break;
@@ -1116,6 +1374,9 @@ void RunFooterAction(HWND hwnd, FooterAction action) {
         break;
     case FooterAction::SaveScene:
         SaveEditorScene();
+        break;
+    case FooterAction::LinkTeleport:
+        BeginTeleportLink();
         break;
     case FooterAction::DeleteObject:
         DeleteSelectedObject();
@@ -1135,15 +1396,15 @@ void MoveSelectedObject(rpg::Vec2 point) {
 
     rpg::Vec2 delta{point.x - g_editor.dragStartWorld.x, point.y - g_editor.dragStartWorld.y};
     rpg::SceneObject& object = g_editor.scene.objects[g_editor.selectedObject];
-    const float targetX = Clamp(g_editor.dragStartObject.x + delta.x, 0.0f, rpg::WorldWidth());
-    const float targetY = Clamp(g_editor.dragStartObject.y + delta.y, 0.0f, rpg::WorldHeight());
+    const float targetX = Clamp(g_editor.dragStartObject.x + delta.x, 0.0f, rpg::SceneWorldWidth(g_editor.scene));
+    const float targetY = Clamp(g_editor.dragStartObject.y + delta.y, 0.0f, rpg::SceneWorldHeight(g_editor.scene));
     const rpg::Vec2 appliedDelta{targetX - object.pos.x, targetY - object.pos.y};
     const std::string groupId = object.groupId;
     if (!groupId.empty()) {
         for (rpg::SceneObject& grouped : g_editor.scene.objects) {
             if (grouped.groupId == groupId) {
-                grouped.pos.x = Clamp(grouped.pos.x + appliedDelta.x, 0.0f, rpg::WorldWidth());
-                grouped.pos.y = Clamp(grouped.pos.y + appliedDelta.y, 0.0f, rpg::WorldHeight());
+                grouped.pos.x = Clamp(grouped.pos.x + appliedDelta.x, 0.0f, rpg::SceneWorldWidth(g_editor.scene));
+                grouped.pos.y = Clamp(grouped.pos.y + appliedDelta.y, 0.0f, rpg::SceneWorldHeight(g_editor.scene));
             }
         }
     } else {
@@ -1172,7 +1433,7 @@ void PaintTerrainCell(int tx, int ty) {
 void PaintTerrainAt(rpg::Vec2 point) {
     const int targetX = static_cast<int>(std::floor(point.x / kTileSize));
     const int targetY = static_cast<int>(std::floor(point.y / kTileSize));
-    if (targetX < 0 || targetY < 0 || targetX >= rpg::kMapWidth || targetY >= rpg::kMapHeight) {
+    if (targetX < 0 || targetY < 0 || targetX >= g_editor.scene.mapWidth || targetY >= g_editor.scene.mapHeight) {
         return;
     }
 
@@ -1225,14 +1486,14 @@ void DrawPalette(HDC hdc, const RECT& client) {
 
     DrawTextLine(hdc, L"场景编辑器", 18, 18, RGB(244, 242, 225));
 
-    constexpr const wchar_t* tabNames[] = {L"对象", L"自然", L"建筑"};
-    const int tabWidth = (kPaletteWidth - 16) / 3;
-    for (int i = 0; i < 3; ++i) {
+    constexpr const wchar_t* tabNames[] = {L"地图", L"对象", L"自然", L"建筑"};
+    const int tabWidth = (kPaletteWidth - 16) / 4;
+    for (int i = 0; i < 4; ++i) {
         const bool selected = static_cast<int>(g_editor.mode) == i;
         RECT tab{
             8 + i * tabWidth,
             kPaletteTabsY,
-            i == 2 ? kPaletteWidth - 8 : 8 + (i + 1) * tabWidth,
+            i == 3 ? kPaletteWidth - 8 : 8 + (i + 1) * tabWidth,
             kPaletteTabsY + kPaletteTabsHeight,
         };
         FillRectColor(hdc, tab, selected ? RGB(79, 102, 87) : RGB(51, 59, 62));
@@ -1248,7 +1509,14 @@ void DrawPalette(HDC hdc, const RECT& client) {
         COLORREF swatch = RGB(56, 65, 68);
         bool showSwatch = false;
 
-        if (g_editor.mode == EditorMode::Objects) {
+        if (g_editor.mode == EditorMode::Maps) {
+            selected = i == g_editor.selectedMap;
+            if (i < static_cast<int>(g_editor.maps.size())) {
+                label = g_editor.maps[i].displayName;
+                showSwatch = true;
+                swatch = g_editor.maps[i].hasPlayerStart ? RGB(91, 169, 208) : RGB(78, 100, 112);
+            }
+        } else if (g_editor.mode == EditorMode::Objects) {
             selected = objectDefs[i]->type == g_editor.selectedType;
             label = objectDefs[i]->displayName;
         } else if (g_editor.mode == EditorMode::Natural) {
@@ -1390,7 +1658,7 @@ void HandleKey(HWND hwnd, WPARAM key) {
 
     switch (key) {
     case VK_DELETE:
-        RunFooterAction(hwnd, FooterAction::DeleteObject);
+        RunFooterAction(hwnd, shift ? FooterAction::DeleteMap : FooterAction::DeleteObject);
         break;
     case 'C':
         RunFooterAction(hwnd, FooterAction::ToggleCollision);
@@ -1400,6 +1668,9 @@ void HandleKey(HWND hwnd, WPARAM key) {
         break;
     case 'B':
         RunFooterAction(hwnd, FooterAction::ExportBlankMap);
+        break;
+    case 'N':
+        RunFooterAction(hwnd, FooterAction::CreateMap);
         break;
     case 'L':
         if (shift) {
@@ -1414,6 +1685,9 @@ void HandleKey(HWND hwnd, WPARAM key) {
         } else {
             g_editor.cameraY += 48.0f;
         }
+        break;
+    case 'T':
+        RunFooterAction(hwnd, FooterAction::LinkTeleport);
         break;
     case 'W':
     case VK_UP:
@@ -1484,7 +1758,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_editor.mode = static_cast<EditorMode>(tab);
             g_editor.selectedObject = -1;
             g_editor.paletteScroll = 0;
-            g_editor.status = tab == 0 ? L"对象工具" : (tab == 1 ? L"自然地皮" : L"建筑地板");
+            g_editor.status = tab == 0 ? L"地图列表" :
+                (tab == 1 ? L"对象工具" : (tab == 2 ? L"自然地皮" : L"建筑地板"));
             ClampPaletteScroll(hwnd);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -1499,7 +1774,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         if (const int hit = PaletteHitTest(hwnd, x, y); hit >= 0) {
-            if (g_editor.mode == EditorMode::Objects) {
+            if (g_editor.mode == EditorMode::Maps) {
+                if (hit < static_cast<int>(g_editor.maps.size())) {
+                    LoadEditorSceneFromPath(g_editor.maps[hit].path);
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            } else if (g_editor.mode == EditorMode::Objects) {
                 const auto objectDefs = PlaceableObjectDefs();
                 if (hit < static_cast<int>(objectDefs.size())) {
                     g_editor.selectedType = objectDefs[hit]->type;
@@ -1537,6 +1818,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 const int objectIndex = HitObject(world);
                 if (objectIndex >= 0) {
                     g_editor.selectedObject = objectIndex;
+                    if (g_editor.linkingTeleport && rpg::ObjectIsTeleport(g_editor.scene.objects[objectIndex])) {
+                        CompleteTeleportLink(objectIndex);
+                    }
                     g_editor.dragging = true;
                     g_editor.dragStartWorld = world;
                     g_editor.dragStartObject = g_editor.scene.objects[objectIndex].pos;
@@ -1544,11 +1828,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 } else {
                     AddObjectAt(world);
                 }
-            } else {
+            } else if (g_editor.mode == EditorMode::Natural || g_editor.mode == EditorMode::Built) {
                 g_editor.paintingTerrain = true;
                 g_editor.lastPaintTileX = -1;
                 g_editor.lastPaintTileY = -1;
                 PaintTerrainAt(world);
+            } else {
+                return 0;
             }
             SetCapture(hwnd);
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -1649,6 +1935,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 } // namespace
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCmd) {
+    // Keep Win32 drawing and mouse coordinates in the same coordinate space on scaled displays.
+    SetProcessDPIAware();
     const wchar_t kClassName[] = L"FreeWalkRpgSceneEditorWindow";
 
     WNDCLASSW wc{};

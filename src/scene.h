@@ -33,6 +33,7 @@ enum class ObjectVisual {
     TreeOak,
     StoneRound,
     Bush,
+    TeleportPoint,
 };
 
 enum class TerrainLayer {
@@ -49,6 +50,7 @@ struct TerrainDef {
     int variants = 1;
     std::uint32_t fallbackRgb = 0;
     bool blocksMovement = false;
+    bool teleport = false;
 };
 
 struct CollisionBody {
@@ -72,6 +74,7 @@ struct SceneObjectDef {
     CollisionBody collision;
     bool placeable = true;
     std::string companionType;
+    bool teleport = false;
 };
 
 struct SceneObject {
@@ -81,16 +84,30 @@ struct SceneObject {
     Vec2 pos;
     float zOffset = 0.0f;
     CollisionBody collision;
+    std::string targetScene;
+    std::string targetId;
 };
 
 struct Scene {
     Scene();
 
-    std::array<std::string, kMapWidth * kMapHeight> naturalTerrain;
-    std::array<std::string, kMapWidth * kMapHeight> builtTerrain;
+    int mapWidth = kMapWidth;
+    int mapHeight = kMapHeight;
+    std::vector<std::string> naturalTerrain;
+    std::vector<std::string> builtTerrain;
+    Vec2 playerStart{180.0f, 170.0f};
+    bool hasPlayerStart = false;
     std::wstring backgroundImagePath;
     std::vector<SceneObject> objects;
 };
+
+inline float SceneWorldWidth(const Scene& scene) {
+    return static_cast<float>(scene.mapWidth * kTileSize);
+}
+
+inline float SceneWorldHeight(const Scene& scene) {
+    return static_cast<float>(scene.mapHeight * kTileSize);
+}
 
 const std::vector<SceneObjectDef>& ObjectDefs();
 const SceneObjectDef* FindObjectDef(std::string_view type);
@@ -116,6 +133,7 @@ RectF ObjectVisualBounds(const SceneObject& object);
 RectF ObjectCollisionRect(const SceneObject& object);
 float ObjectSortY(const SceneObject& object);
 bool ObjectIsGroundOverlay(const SceneObject& object);
+bool ObjectIsTeleport(const SceneObject& object);
 bool PointInObjectVisual(const SceneObject& object, Vec2 point);
 bool CircleIntersectsScene(const Scene& scene, Vec2 center, float radius);
 bool CircleIntersectsBlockedTerrain(const Scene& scene, Vec2 center, float radius, bool canTraverseWater = false);

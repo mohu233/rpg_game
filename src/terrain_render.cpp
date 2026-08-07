@@ -267,8 +267,8 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
     graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
     graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
 
-    for (int y = 0; y < kMapHeight; ++y) {
-        for (int x = 0; x < kMapWidth; ++x) {
+    for (int y = 0; y < scene.mapHeight; ++y) {
+        for (int x = 0; x < scene.mapWidth; ++x) {
             const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
             const std::string_view currentId = NaturalTerrainAt(scene, x, y);
             if (currentId == "none") {
@@ -303,8 +303,8 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
         }
     }
 
-    for (int y = 0; y < kMapHeight; ++y) {
-        for (int x = 0; x < kMapWidth; ++x) {
+    for (int y = 0; y < scene.mapHeight; ++y) {
+        for (int x = 0; x < scene.mapWidth; ++x) {
             const std::string_view builtId = BuiltTerrainAt(scene, x, y);
             if (builtId == "none") {
                 continue;
@@ -317,8 +317,8 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
         }
     }
 
-    for (int y = 0; y < kMapHeight; ++y) {
-        for (int x = 0; x < kMapWidth; ++x) {
+    for (int y = 0; y < scene.mapHeight; ++y) {
+        for (int x = 0; x < scene.mapWidth; ++x) {
             const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
             if (showGrid) {
                 DrawLine(hdc, rect.left, rect.top, rect.right, rect.top, RGB(74, 104, 83));

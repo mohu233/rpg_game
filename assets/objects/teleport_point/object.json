@@ -1,0 +1,18 @@
+{
+  "type": "teleport_point",
+  "display_name": "传送点",
+  "image": "teleport_point.bmp",
+  "width": 72.0,
+  "height": 72.0,
+  "z_offset": 0.0,
+  "teleport": true,
+  "collision": {
+    "shape": "none",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 0.0,
+    "h": 0.0,
+    "radius": 0.0,
+    "blocks": false
+  }
+}

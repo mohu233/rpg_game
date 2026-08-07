@@ -282,7 +282,7 @@ std::string DecodeTerrainCell(
 }
 
 std::vector<std::string> CollectTerrainPalette(
-    const std::array<std::string, kMapWidth * kMapHeight>& layer) {
+    const std::vector<std::string>& layer) {
     std::vector<std::string> palette;
     for (const std::string& id : layer) {
         if (std::find(palette.begin(), palette.end(), id) == palette.end()) {
@@ -310,9 +310,9 @@ void LoadTerrainLayer(const std::string& text, Scene& scene) {
     }
     if (const auto naturalArray = FindBracketedField(*terrainBlock, "natural", '[', ']')) {
         const auto rows = ExtractStringValues(*naturalArray);
-        for (int y = 0; y < std::min(kMapHeight, static_cast<int>(rows.size())); ++y) {
-            for (int x = 0; x < std::min(kMapWidth, static_cast<int>(rows[y].size())); ++x) {
-                scene.naturalTerrain[y * kMapWidth + x] = DecodeTerrainCell(rows[y][x], naturalPalette, TerrainLayer::Natural);
+        for (int y = 0; y < std::min(scene.mapHeight, static_cast<int>(rows.size())); ++y) {
+            for (int x = 0; x < std::min(scene.mapWidth, static_cast<int>(rows[y].size())); ++x) {
+                scene.naturalTerrain[y * scene.mapWidth + x] = DecodeTerrainCell(rows[y][x], naturalPalette, TerrainLayer::Natural);
             }
         }
     }
@@ -323,9 +323,9 @@ void LoadTerrainLayer(const std::string& text, Scene& scene) {
     }
     if (const auto builtArray = FindBracketedField(*terrainBlock, "built", '[', ']')) {
         const auto rows = ExtractStringValues(*builtArray);
-        for (int y = 0; y < std::min(kMapHeight, static_cast<int>(rows.size())); ++y) {
-            for (int x = 0; x < std::min(kMapWidth, static_cast<int>(rows[y].size())); ++x) {
-                scene.builtTerrain[y * kMapWidth + x] = DecodeTerrainCell(rows[y][x], builtPalette, TerrainLayer::Built);
+        for (int y = 0; y < std::min(scene.mapHeight, static_cast<int>(rows.size())); ++y) {
+            for (int x = 0; x < std::min(scene.mapWidth, static_cast<int>(rows[y].size())); ++x) {
+                scene.builtTerrain[y * scene.mapWidth + x] = DecodeTerrainCell(rows[y][x], builtPalette, TerrainLayer::Built);
             }
         }
     }
@@ -426,6 +426,7 @@ bool LoadObjectDef(
     def.collision = ParseCollision(text, nullptr);
     def.placeable = FindBoolField(text, "placeable").value_or(true);
     def.companionType = FindStringField(text, "companion_type").value_or("");
+    def.teleport = FindBoolField(text, "teleport").value_or(false);
     if (!def.companionType.empty() && !IsValidObjectType(def.companionType)) {
         error = "companion_type must contain only letters, numbers, '-' or '_'";
         return false;
@@ -737,29 +738,29 @@ const SceneObjectDef* FindObjectDef(std::string_view type) {
 }
 
 Scene::Scene() {
-    naturalTerrain.fill("grass");
-    builtTerrain.fill("none");
+    naturalTerrain.assign(mapWidth * mapHeight, "grass");
+    builtTerrain.assign(mapWidth * mapHeight, "none");
 }
 
 std::string_view NaturalTerrainAt(const Scene& scene, int tx, int ty) {
-    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+    if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) {
         return "grass";
     }
-    return scene.naturalTerrain[ty * kMapWidth + tx];
+    return scene.naturalTerrain[ty * scene.mapWidth + tx];
 }
 
 std::string_view BuiltTerrainAt(const Scene& scene, int tx, int ty) {
-    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+    if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) {
         return "none";
     }
-    return scene.builtTerrain[ty * kMapWidth + tx];
+    return scene.builtTerrain[ty * scene.mapWidth + tx];
 }
 
 bool SetNaturalTerrain(Scene& scene, int tx, int ty, std::string_view terrainId) {
-    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+    if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) {
         return false;
     }
-    std::string& cell = scene.naturalTerrain[ty * kMapWidth + tx];
+    std::string& cell = scene.naturalTerrain[ty * scene.mapWidth + tx];
     if (cell == terrainId) {
         return false;
     }
@@ -768,10 +769,10 @@ bool SetNaturalTerrain(Scene& scene, int tx, int ty, std::string_view terrainId)
 }
 
 bool SetBuiltTerrain(Scene& scene, int tx, int ty, std::string_view terrainId) {
-    if (tx < 0 || ty < 0 || tx >= kMapWidth || ty >= kMapHeight) {
+    if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) {
         return false;
     }
-    std::string& cell = scene.builtTerrain[ty * kMapWidth + tx];
+    std::string& cell = scene.builtTerrain[ty * scene.mapWidth + tx];
     if (cell == terrainId) {
         return false;
     }
@@ -810,6 +811,15 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
     }
 
     Scene loaded;
+    loaded.mapWidth = std::clamp(static_cast<int>(std::lround(FindFloatField(text, "width").value_or(kMapWidth))), 1, 256);
+    loaded.mapHeight = std::clamp(static_cast<int>(std::lround(FindFloatField(text, "height").value_or(kMapHeight))), 1, 256);
+    loaded.naturalTerrain.assign(loaded.mapWidth * loaded.mapHeight, "grass");
+    loaded.builtTerrain.assign(loaded.mapWidth * loaded.mapHeight, "none");
+    if (const auto playerStartBlock = FindBracketedField(text, "player_start", '{', '}')) {
+        loaded.playerStart.x = FindFloatField(*playerStartBlock, "x").value_or(loaded.playerStart.x);
+        loaded.playerStart.y = FindFloatField(*playerStartBlock, "y").value_or(loaded.playerStart.y);
+        loaded.hasPlayerStart = true;
+    }
     if (const auto background = FindStringField(text, "background_image")) {
         loaded.backgroundImagePath = std::filesystem::u8path(*background).wstring();
     }
@@ -831,6 +841,8 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
         object.pos = {*x, *y};
         object.zOffset = FindFloatField(block, "z").value_or(def ? def->zOffset : 0.0f);
         object.collision = ParseCollision(block, def);
+        object.targetScene = FindStringField(block, "target_scene").value_or("");
+        object.targetId = FindStringField(block, "target_id").value_or("");
         loaded.objects.push_back(object);
         ++index;
     }
@@ -862,6 +874,8 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
 
     out << "{\n";
     out << "  \"version\": 3,\n";
+    out << "  \"width\": " << scene.mapWidth << ",\n";
+    out << "  \"height\": " << scene.mapHeight << ",\n";
     out << "  \"terrain\": {\n";
     out << "    \"natural_palette\": [";
     for (size_t i = 0; i < naturalPalette.size(); ++i) {
@@ -869,12 +883,12 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     }
     out << "],\n";
     out << "    \"natural\": [\n";
-    for (int y = 0; y < kMapHeight; ++y) {
+    for (int y = 0; y < scene.mapHeight; ++y) {
         out << "      \"";
-        for (int x = 0; x < kMapWidth; ++x) {
-            out << EncodeTerrainCell(scene.naturalTerrain[y * kMapWidth + x], naturalPalette);
+        for (int x = 0; x < scene.mapWidth; ++x) {
+            out << EncodeTerrainCell(scene.naturalTerrain[y * scene.mapWidth + x], naturalPalette);
         }
-        out << "\"" << (y + 1 == kMapHeight ? "\n" : ",\n");
+        out << "\"" << (y + 1 == scene.mapHeight ? "\n" : ",\n");
     }
     out << "    ],\n";
     out << "    \"built_palette\": [";
@@ -883,15 +897,20 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     }
     out << "],\n";
     out << "    \"built\": [\n";
-    for (int y = 0; y < kMapHeight; ++y) {
+    for (int y = 0; y < scene.mapHeight; ++y) {
         out << "      \"";
-        for (int x = 0; x < kMapWidth; ++x) {
-            out << EncodeTerrainCell(scene.builtTerrain[y * kMapWidth + x], builtPalette);
+        for (int x = 0; x < scene.mapWidth; ++x) {
+            out << EncodeTerrainCell(scene.builtTerrain[y * scene.mapWidth + x], builtPalette);
         }
-        out << "\"" << (y + 1 == kMapHeight ? "\n" : ",\n");
+        out << "\"" << (y + 1 == scene.mapHeight ? "\n" : ",\n");
     }
     out << "    ]\n";
     out << "  },\n";
+    if (scene.hasPlayerStart) {
+        out << std::fixed << std::setprecision(1);
+        out << "  \"player_start\": {\"x\": " << scene.playerStart.x
+            << ", \"y\": " << scene.playerStart.y << "},\n";
+    }
     if (!scene.backgroundImagePath.empty()) {
         out << "  \"background_image\": \"" << std::filesystem::path(scene.backgroundImagePath).generic_u8string() << "\",\n";
     }
@@ -906,7 +925,14 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
         }
         out << "      \"type\": \"" << object.type << "\",\n";
         out << "      \"x\": " << object.pos.x << ",\n";
-        out << "      \"y\": " << object.pos.y << "\n";
+        out << "      \"y\": " << object.pos.y;
+        if (!object.targetScene.empty()) {
+            out << ",\n      \"target_scene\": \"" << object.targetScene << "\"";
+        }
+        if (!object.targetId.empty()) {
+            out << ",\n      \"target_id\": \"" << object.targetId << "\"";
+        }
+        out << "\n";
         out << "    }" << (i + 1 == scene.objects.size() ? "\n" : ",\n");
     }
     out << "  ]\n";
@@ -946,6 +972,11 @@ float ObjectSortY(const SceneObject& object) {
 
 bool ObjectIsGroundOverlay(const SceneObject& object) {
     return object.zOffset < 0.0f;
+}
+
+bool ObjectIsTeleport(const SceneObject& object) {
+    const SceneObjectDef* def = FindObjectDef(object.type);
+    return def && def->teleport;
 }
 
 bool PointInObjectVisual(const SceneObject& object, Vec2 point) {

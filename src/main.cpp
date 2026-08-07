@@ -18,8 +18,6 @@ namespace {
 constexpr int kWindowWidth = 960;
 constexpr int kWindowHeight = 640;
 constexpr int kTileSize = rpg::kTileSize;
-constexpr int kMapWidth = rpg::kMapWidth;
-constexpr int kMapHeight = rpg::kMapHeight;
 constexpr float kPlayerRadius = 16.0f;
 constexpr float kPlayerSpeed = 190.0f;
 constexpr int kSpriteFrameSize = 96;
@@ -67,6 +65,7 @@ struct Game {
     bool interact = false;
     bool showTalk = false;
     int nearbyNpc = -1;
+    float teleportCooldown = 0.0f;
     LARGE_INTEGER lastTick{};
     LARGE_INTEGER freq{};
 };
@@ -176,8 +175,8 @@ bool DrawBackgroundImage(HDC hdc) {
     const Gdiplus::Rect destination(
         static_cast<INT>(std::round(-g_game.camera.x)),
         static_cast<INT>(std::round(-g_game.camera.y)),
-        static_cast<INT>(std::round(rpg::WorldWidth())),
-        static_cast<INT>(std::round(rpg::WorldHeight())));
+         static_cast<INT>(std::round(rpg::SceneWorldWidth(g_game.scene))),
+         static_cast<INT>(std::round(rpg::SceneWorldHeight(g_game.scene))));
     return graphics.DrawImage(
                bitmap,
                destination,
@@ -191,8 +190,8 @@ bool DrawBackgroundImage(HDC hdc) {
 bool CollidesWithMap(Vec2 pos, float radius) {
     if (pos.x - radius < 0.0f ||
         pos.y - radius < 0.0f ||
-        pos.x + radius > rpg::WorldWidth() ||
-        pos.y + radius > rpg::WorldHeight()) {
+         pos.x + radius > rpg::SceneWorldWidth(g_game.scene) ||
+         pos.y + radius > rpg::SceneWorldHeight(g_game.scene)) {
         return true;
     }
 
@@ -244,12 +243,62 @@ void LoadGameScene() {
     rpg::ReloadTerrainDefs();
     std::string error;
     const std::filesystem::path scenePath = g_requestedScenePath.empty()
-        ? AssetPath(L"scenes/demo_scene.json")
+        ? AssetPath(L"maps/demo_scene.json")
         : g_requestedScenePath;
     if (!rpg::LoadSceneFromFile(scenePath, g_game.scene, &error)) {
         g_game.scene = rpg::MakeDefaultScene();
         rpg::SaveSceneToFile(scenePath, g_game.scene);
     }
+    g_game.player.pos = {g_game.scene.playerStart.x, g_game.scene.playerStart.y};
+}
+
+std::filesystem::path ResolveScenePath(const std::string& storedPath) {
+    const std::filesystem::path path = std::filesystem::u8path(storedPath);
+    return path.is_absolute() ? path : std::filesystem::path(RPG_ASSET_DIR) / path;
+}
+
+bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view targetId) {
+    rpg::Scene nextScene;
+    std::string error;
+    if (!rpg::LoadSceneFromFile(path, nextScene, &error)) {
+        return false;
+    }
+
+    rpg::Vec2 destination = nextScene.playerStart;
+    if (!targetId.empty()) {
+        for (const rpg::SceneObject& object : nextScene.objects) {
+            if (object.id == targetId && rpg::ObjectIsTeleport(object)) {
+                destination = object.pos;
+                break;
+            }
+        }
+    }
+
+    ReleaseBackgroundResources();
+    g_game.scene = std::move(nextScene);
+    g_game.player.pos = {destination.x, destination.y};
+    g_game.player.animTime = 0.0f;
+    g_game.teleportCooldown = 0.8f;
+    return true;
+}
+
+bool TryTeleport() {
+    for (const rpg::SceneObject& object : g_game.scene.objects) {
+        if (!rpg::ObjectIsTeleport(object) || object.targetScene.empty()) {
+            continue;
+        }
+
+        const float dx = g_game.player.pos.x - object.pos.x;
+        const float dy = g_game.player.pos.y - object.pos.y;
+        if (dx * dx + dy * dy > 28.0f * 28.0f) {
+            continue;
+        }
+
+        if (LoadRuntimeScene(ResolveScenePath(object.targetScene), object.targetId)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 float Distance(Vec2 a, Vec2 b) {
@@ -269,6 +318,7 @@ void UpdateNearbyNpc() {
 }
 
 void UpdateGame(float dt) {
+    g_game.teleportCooldown = std::max(0.0f, g_game.teleportCooldown - dt);
     Vec2 input{};
     if (g_game.left) {
         input.x -= 1.0f;
@@ -301,6 +351,9 @@ void UpdateGame(float dt) {
         g_game.player.animTime = 0.0f;
     }
     TryMove(g_game.player, {g_game.player.vel.x * dt, g_game.player.vel.y * dt});
+    if (g_game.teleportCooldown <= 0.0f) {
+        TryTeleport();
+    }
 
     UpdateNearbyNpc();
     if (g_game.interact && g_game.nearbyNpc >= 0) {
@@ -311,8 +364,8 @@ void UpdateGame(float dt) {
     }
     g_game.interact = false;
 
-    const float worldW = static_cast<float>(kMapWidth * kTileSize);
-    const float worldH = static_cast<float>(kMapHeight * kTileSize);
+    const float worldW = rpg::SceneWorldWidth(g_game.scene);
+    const float worldH = rpg::SceneWorldHeight(g_game.scene);
     g_game.camera.x = Clamp(g_game.player.pos.x - kWindowWidth * 0.5f, 0.0f, std::max(0.0f, worldW - kWindowWidth));
     g_game.camera.y = Clamp(g_game.player.pos.y - kWindowHeight * 0.5f, 0.0f, std::max(0.0f, worldH - kWindowHeight));
 }
