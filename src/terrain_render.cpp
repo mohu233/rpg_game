@@ -173,12 +173,12 @@ bool LoadTerrainBitmap(const TerrainDef& def, TerrainBitmap& cached) {
     return true;
 }
 
-RECT TileRect(int tx, int ty, float cameraX, float cameraY) {
+RECT TileRect(int tx, int ty, float cameraX, float cameraY, float zoom) {
     return {
-        static_cast<LONG>(std::round(tx * kTileSize - cameraX)),
-        static_cast<LONG>(std::round(ty * kTileSize - cameraY)),
-        static_cast<LONG>(std::round((tx + 1) * kTileSize - cameraX)),
-        static_cast<LONG>(std::round((ty + 1) * kTileSize - cameraY)),
+        static_cast<LONG>(std::round(tx * kTileSize * zoom - cameraX)),
+        static_cast<LONG>(std::round(ty * kTileSize * zoom - cameraY)),
+        static_cast<LONG>(std::round((tx + 1) * kTileSize * zoom - cameraX)),
+        static_cast<LONG>(std::round((ty + 1) * kTileSize * zoom - cameraY)),
     };
 }
 
@@ -256,7 +256,7 @@ COLORREF TerrainFallbackColor(const TerrainDef& terrain) {
         terrain.fallbackRgb & 0xff);
 }
 
-void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool showGrid) {
+void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool showGrid, float zoom) {
     if (!EnsureGdiPlus()) {
         return;
     }
@@ -269,7 +269,7 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
 
     for (int y = 0; y < kMapHeight; ++y) {
         for (int x = 0; x < kMapWidth; ++x) {
-            const RECT rect = TileRect(x, y, cameraX, cameraY);
+            const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
             const std::string_view currentId = NaturalTerrainAt(scene, x, y);
             if (currentId == "none") {
                 continue;
@@ -310,7 +310,7 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
                 continue;
             }
             const TerrainDef* built = FindTerrainDef(builtId, TerrainLayer::Built);
-            const RECT rect = TileRect(x, y, cameraX, cameraY);
+            const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
             if (!built || !DrawTerrainImage(graphics, *built, rect, x, y)) {
                 FillSolidRect(hdc, rect, built ? TerrainFallbackColor(*built) : kMissingTerrain);
             }
@@ -319,7 +319,7 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
 
     for (int y = 0; y < kMapHeight; ++y) {
         for (int x = 0; x < kMapWidth; ++x) {
-            const RECT rect = TileRect(x, y, cameraX, cameraY);
+            const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
             if (showGrid) {
                 DrawLine(hdc, rect.left, rect.top, rect.right, rect.top, RGB(74, 104, 83));
                 DrawLine(hdc, rect.left, rect.top, rect.left, rect.bottom, RGB(74, 104, 83));

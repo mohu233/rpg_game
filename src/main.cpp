@@ -79,6 +79,7 @@ constexpr std::array<Npc, 3> kNpcs = {{
 }};
 
 Game g_game;
+std::filesystem::path g_requestedScenePath;
 SpriteSheet g_playerSprite;
 
 struct BackgroundCache {
@@ -243,7 +244,9 @@ void LoadGameScene() {
     rpg::ReloadObjectDefs();
     rpg::ReloadTerrainDefs();
     std::string error;
-    const std::filesystem::path scenePath = AssetPath(L"scenes/demo_scene.json");
+    const std::filesystem::path scenePath = g_requestedScenePath.empty()
+        ? AssetPath(L"scenes/demo_scene.json")
+        : g_requestedScenePath;
     if (!rpg::LoadSceneFromFile(scenePath, g_game.scene, &error)) {
         g_game.scene = rpg::MakeDefaultScene();
         rpg::SaveSceneToFile(scenePath, g_game.scene);
@@ -596,7 +599,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 } // namespace
 
-int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCmd) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR commandLine, int showCmd) {
+    if (commandLine && *commandLine) {
+        std::wstring value(commandLine);
+        if (value.size() >= 2 && value.front() == L'"' && value.back() == L'"') {
+            value = value.substr(1, value.size() - 2);
+        }
+        g_requestedScenePath = std::filesystem::path(value);
+    }
     const wchar_t kClassName[] = L"FreeWalkRpgDemoWindow";
 
     WNDCLASSW wc{};

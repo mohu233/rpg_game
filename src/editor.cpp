@@ -29,7 +29,7 @@ constexpr int kPaletteTabsY = 52;
 constexpr int kPaletteTabsHeight = 32;
 constexpr int kPaletteFirstY = 100;
 constexpr int kPaletteRowHeight = 56;
-constexpr int kPaletteFooterHeight = 235;
+constexpr int kPaletteFooterHeight = 270;
 constexpr int kMinimumMapViewportWidth = 480;
 constexpr int kTileSize = rpg::kTileSize;
 
@@ -44,6 +44,8 @@ enum class EditorMode {
 };
 
 enum class FooterAction {
+    LoadScene,
+    SaveSceneAs,
     LoadBackground,
     ClearBackground,
     ExportBlankMap,
@@ -58,6 +60,8 @@ struct FooterButtonDef {
 };
 
 constexpr FooterButtonDef kFooterButtons[] = {
+    {FooterAction::LoadScene, L"Load Scene"},
+    {FooterAction::SaveSceneAs, L"Save Scene As"},
     {FooterAction::LoadBackground, L"载入底图  L"},
     {FooterAction::ClearBackground, L"清除底图  Shift+L"},
     {FooterAction::ExportBlankMap, L"导出空白图  B"},
@@ -95,6 +99,12 @@ struct EditorState {
     bool showCollision = true;
     float cameraX = 0.0f;
     float cameraY = 0.0f;
+    float zoom = 1.0f;
+    bool panning = false;
+    POINT panStartScreen{};
+    float panStartCameraX = 0.0f;
+    float panStartCameraY = 0.0f;
+    std::filesystem::path scenePath;
     int paletteScroll = 0;
     rpg::Vec2 dragStartWorld{};
     rpg::Vec2 dragStartObject{};
@@ -536,6 +546,47 @@ bool PromptOpenImageFile(HWND owner, std::filesystem::path& outPath) {
     return true;
 }
 
+bool PromptOpenSceneFile(HWND owner, std::filesystem::path& outPath) {
+    wchar_t buffer[MAX_PATH * 4]{};
+    std::wstring initialDir = AssetPath(L"scenes").wstring();
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"Scene JSON (*.json)\0*.json\0All files\0*.*\0";
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+    ofn.lpstrInitialDir = initialDir.c_str();
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_EXPLORER;
+    if (!GetOpenFileNameW(&ofn)) {
+        return false;
+    }
+    outPath = buffer;
+    return true;
+}
+
+bool PromptSaveSceneFile(HWND owner, const std::filesystem::path& current, std::filesystem::path& outPath) {
+    wchar_t buffer[MAX_PATH * 4]{};
+    const std::wstring currentName = current.empty() ? L"scene.json" : current.filename().wstring();
+    wcsncpy_s(buffer, currentName.c_str(), _TRUNCATE);
+    std::wstring initialDir = AssetPath(L"scenes").wstring();
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"Scene JSON (*.json)\0*.json\0All files\0*.*\0";
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+    ofn.lpstrInitialDir = initialDir.c_str();
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    if (!GetSaveFileNameW(&ofn)) {
+        return false;
+    }
+    outPath = buffer;
+    if (outPath.extension().empty()) {
+        outPath.replace_extension(L".json");
+    }
+    return true;
+}
+
 bool PromptSavePngFile(HWND owner, std::filesystem::path& outPath) {
     wchar_t buffer[MAX_PATH * 4] = L"空白地图.png";
     std::wstring initialDir = AssetPath(L"").wstring();
@@ -579,8 +630,8 @@ bool DrawBackgroundImage(HDC hdc) {
 
     const int destX = static_cast<int>(std::round(kPaletteWidth - g_editor.cameraX));
     const int destY = static_cast<int>(std::round(-g_editor.cameraY));
-    const int destW = static_cast<int>(std::round(rpg::WorldWidth()));
-    const int destH = static_cast<int>(std::round(rpg::WorldHeight()));
+    const int destW = static_cast<int>(std::round(rpg::WorldWidth() * g_editor.zoom));
+    const int destH = static_cast<int>(std::round(rpg::WorldHeight() * g_editor.zoom));
 
     graphics.DrawImage(
         bitmap,
@@ -673,14 +724,14 @@ void ClampCamera(HWND hwnd) {
     GetClientRect(hwnd, &client);
     const float viewportW = static_cast<float>(std::max<LONG>(1, client.right - kPaletteWidth));
     const float viewportH = static_cast<float>(std::max<LONG>(1, client.bottom));
-    g_editor.cameraX = Clamp(g_editor.cameraX, 0.0f, std::max(0.0f, rpg::WorldWidth() - viewportW));
-    g_editor.cameraY = Clamp(g_editor.cameraY, 0.0f, std::max(0.0f, rpg::WorldHeight() - viewportH));
+    g_editor.cameraX = Clamp(g_editor.cameraX, 0.0f, std::max(0.0f, rpg::WorldWidth() * g_editor.zoom - viewportW));
+    g_editor.cameraY = Clamp(g_editor.cameraY, 0.0f, std::max(0.0f, rpg::WorldHeight() * g_editor.zoom - viewportH));
 }
 
 rpg::Vec2 ScreenToWorld(int x, int y) {
     return {
-        static_cast<float>(x - kPaletteWidth) + g_editor.cameraX,
-        static_cast<float>(y) + g_editor.cameraY,
+        (static_cast<float>(x - kPaletteWidth) + g_editor.cameraX) / g_editor.zoom,
+        (static_cast<float>(y) + g_editor.cameraY) / g_editor.zoom,
     };
 }
 
@@ -871,7 +922,7 @@ void MarkDirty(const std::wstring& status) {
     g_editor.status = status;
 }
 
-void LoadEditorScene() {
+bool LoadEditorSceneFromPath(const std::filesystem::path& scenePath) {
     rpg::ReleaseSceneRenderResources();
     rpg::ReleaseTerrainRenderResources();
     ReleaseBackgroundResources();
@@ -897,7 +948,6 @@ void LoadEditorScene() {
     }
 
     std::string error;
-    const std::filesystem::path scenePath = AssetPath(L"scenes/demo_scene.json");
     if (!rpg::LoadSceneFromFile(scenePath, g_editor.scene, &error)) {
         g_editor.scene = rpg::MakeDefaultScene();
         rpg::SaveSceneToFile(scenePath, g_editor.scene);
@@ -908,6 +958,9 @@ void LoadEditorScene() {
 
     g_editor.selectedObject = -1;
     g_editor.nextObjectId = static_cast<int>(g_editor.scene.objects.size()) + 1;
+    g_editor.scenePath = scenePath;
+    g_editor.cameraX = 0.0f;
+    g_editor.cameraY = 0.0f;
     g_editor.dirty = false;
 
     if (!objectsLoaded || !terrainLoaded) {
@@ -917,15 +970,43 @@ void LoadEditorScene() {
     } else {
         g_editor.status = L"已载入场景模块";
     }
+    return true;
+}
+
+void SetZoomAt(HWND hwnd, int screenX, int screenY, float factor) {
+    const rpg::Vec2 anchor = ScreenToWorld(screenX, screenY);
+    g_editor.zoom = Clamp(g_editor.zoom * factor, 0.5f, 2.5f);
+    g_editor.cameraX = anchor.x * g_editor.zoom - static_cast<float>(screenX - kPaletteWidth);
+    g_editor.cameraY = anchor.y * g_editor.zoom - static_cast<float>(screenY);
+    ClampCamera(hwnd);
+}
+
+void LoadEditorScene() {
+    LoadEditorSceneFromPath(g_editor.scenePath.empty() ? AssetPath(L"scenes/demo_scene.json") : g_editor.scenePath);
 }
 
 void SaveEditorScene() {
     std::string error;
-    if (rpg::SaveSceneToFile(AssetPath(L"scenes/demo_scene.json"), g_editor.scene, &error)) {
+    if (rpg::SaveSceneToFile(g_editor.scenePath.empty() ? AssetPath(L"scenes/demo_scene.json") : g_editor.scenePath, g_editor.scene, &error)) {
         g_editor.status = L"已保存场景";
         g_editor.dirty = false;
     } else {
         g_editor.status = L"保存失败";
+    }
+}
+
+void LoadSceneDialog(HWND hwnd) {
+    std::filesystem::path path;
+    if (PromptOpenSceneFile(hwnd, path)) {
+        LoadEditorSceneFromPath(path);
+    }
+}
+
+void SaveSceneAsDialog(HWND hwnd) {
+    std::filesystem::path path;
+    if (PromptSaveSceneFile(hwnd, g_editor.scenePath, path)) {
+        g_editor.scenePath = path;
+        SaveEditorScene();
     }
 }
 
@@ -1016,6 +1097,12 @@ void RunFooterAction(HWND hwnd, FooterAction action) {
     DebugTrace(L"[RunFooterAction] action=" + std::to_wstring(static_cast<int>(action)));
     DebugTraceAscii("footer:action=" + std::to_string(static_cast<int>(action)));
     switch (action) {
+    case FooterAction::LoadScene:
+        LoadSceneDialog(hwnd);
+        break;
+    case FooterAction::SaveSceneAs:
+        SaveSceneAsDialog(hwnd);
+        break;
     case FooterAction::LoadBackground:
         LoadBackgroundImage(hwnd);
         break;
@@ -1210,7 +1297,7 @@ void DrawPalette(HDC hdc, const RECT& client) {
 }
 
 void DrawMap(HDC hdc) {
-    rpg::DrawTerrain(hdc, g_editor.scene, g_editor.cameraX - kPaletteWidth, g_editor.cameraY, true);
+    rpg::DrawTerrain(hdc, g_editor.scene, g_editor.cameraX - kPaletteWidth, g_editor.cameraY, true, g_editor.zoom);
 }
 
 void DrawSceneObjects(HDC hdc) {
@@ -1230,7 +1317,8 @@ void DrawSceneObjects(HDC hdc) {
                 g_editor.scene.objects[index],
                 g_editor.cameraX - kPaletteWidth,
                 g_editor.cameraY,
-                index == g_editor.selectedObject);
+                index == g_editor.selectedObject,
+                g_editor.zoom);
         }
     }
 
@@ -1243,7 +1331,8 @@ void DrawSceneObjects(HDC hdc) {
             g_editor.scene.objects[index],
             g_editor.cameraX - kPaletteWidth,
             g_editor.cameraY,
-            index == g_editor.selectedObject);
+            index == g_editor.selectedObject,
+            g_editor.zoom);
     }
 
     if (g_editor.showCollision) {
@@ -1253,7 +1342,8 @@ void DrawSceneObjects(HDC hdc) {
                 g_editor.scene.objects[index],
                 g_editor.cameraX - kPaletteWidth,
                 g_editor.cameraY,
-                index == g_editor.selectedObject ? RGB(255, 245, 96) : RGB(219, 64, 64));
+                index == g_editor.selectedObject ? RGB(255, 245, 96) : RGB(219, 64, 64),
+                g_editor.zoom);
         }
     }
 }
@@ -1334,6 +1424,12 @@ void HandleKey(HWND hwnd, WPARAM key) {
     case 'D':
     case VK_RIGHT:
         g_editor.cameraX += 48.0f;
+        break;
+    case VK_ADD:
+        SetZoomAt(hwnd, kPaletteWidth + kMinimumMapViewportWidth / 2, kWindowHeight / 2, 1.1f);
+        break;
+    case VK_SUBTRACT:
+        SetZoomAt(hwnd, kPaletteWidth + kMinimumMapViewportWidth / 2, kWindowHeight / 2, 1.0f / 1.1f);
         break;
     default:
         repaint = false;
@@ -1426,6 +1522,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         if (x >= kPaletteWidth) {
+            if (GetKeyState(VK_SPACE) & 0x8000) {
+                g_editor.panning = true;
+                g_editor.panStartScreen = POINT{x, y};
+                g_editor.panStartCameraX = g_editor.cameraX;
+                g_editor.panStartCameraY = g_editor.cameraY;
+                SetCapture(hwnd);
+                return 0;
+            }
             const rpg::Vec2 world = ScreenToWorld(x, y);
             if (g_editor.mode == EditorMode::Objects) {
                 const int objectIndex = HitObject(world);
@@ -1452,7 +1556,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_MOUSEWHEEL: {
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(hwnd, &point);
-        if (point.x >= 0 && point.x < kPaletteWidth) {
+        if (point.x >= kPaletteWidth) {
+            const int steps = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+            if (steps != 0) {
+                SetZoomAt(hwnd, point.x, point.y, steps > 0 ? 1.1f : 1.0f / 1.1f);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        } else {
             const int steps = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
             g_editor.paletteScroll -= steps * kPaletteRowHeight;
             ClampPaletteScroll(hwnd);
@@ -1461,7 +1571,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_MOUSEMOVE:
-        if (g_editor.paintingTerrain && (wParam & MK_LBUTTON)) {
+        if (g_editor.panning && (wParam & MK_LBUTTON)) {
+            g_editor.cameraX = g_editor.panStartCameraX - static_cast<float>(GET_X_LPARAM(lParam) - g_editor.panStartScreen.x);
+            g_editor.cameraY = g_editor.panStartCameraY - static_cast<float>(GET_Y_LPARAM(lParam) - g_editor.panStartScreen.y);
+            ClampCamera(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        } else if (g_editor.paintingTerrain && (wParam & MK_LBUTTON)) {
             PaintTerrainAt(ScreenToWorld(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (g_editor.dragging && (wParam & MK_LBUTTON)) {
@@ -1469,8 +1584,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
+    case WM_MBUTTONDOWN:
+        g_editor.panning = true;
+        g_editor.panStartScreen = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        g_editor.panStartCameraX = g_editor.cameraX;
+        g_editor.panStartCameraY = g_editor.cameraY;
+        SetCapture(hwnd);
+        return 0;
+    case WM_MBUTTONUP:
+        g_editor.panning = false;
+        ReleaseCapture();
+        return 0;
     case WM_LBUTTONUP:
-        if (g_editor.dragging || g_editor.paintingTerrain) {
+        if (g_editor.panning || g_editor.dragging || g_editor.paintingTerrain) {
+            g_editor.panning = false;
             g_editor.dragging = false;
             g_editor.paintingTerrain = false;
             g_editor.lastPaintTileX = -1;

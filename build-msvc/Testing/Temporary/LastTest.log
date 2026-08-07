@@ -1,18 +1,19 @@
-Start testing: Aug 06 18:42 中国标准时间
+Start testing: Aug 07 11:40 中国标准时间
 ----------------------------------------------------------
 1/1 Testing: SceneDataRoundTrip
 1/1 Test: SceneDataRoundTrip
 Command: "E:/rpg_game/build-msvc/SceneDataTests.exe"
 Directory: E:/rpg_game/build-msvc
-"SceneDataRoundTrip" start time: Aug 06 18:42 中国标准时间
+"SceneDataRoundTrip" start time: Aug 07 11:40 中国标准时间
 Output:
 ----------------------------------------------------------
+expected three object modules
 <end of output>
-Test time =   0.79 sec
+Test time =   0.03 sec
 ----------------------------------------------------------
-Test Passed.
-"SceneDataRoundTrip" end time: Aug 06 18:42 中国标准时间
+Test Failed.
+"SceneDataRoundTrip" end time: Aug 07 11:40 中国标准时间
 "SceneDataRoundTrip" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Aug 06 18:42 中国标准时间
+End testing: Aug 07 11:40 中国标准时间

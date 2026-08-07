@@ -1,2 +1,3 @@
-SceneDataRoundTrip 1 0.789741
+SceneDataRoundTrip 1 0
 ---
+SceneDataRoundTrip

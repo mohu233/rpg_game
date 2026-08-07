@@ -13,7 +13,8 @@ void DrawTerrain(
     const Scene& scene,
     float cameraX,
     float cameraY,
-    bool showGrid = false);
+    bool showGrid = false,
+    float zoom = 1.0f);
 void ReleaseTerrainRenderResources();
 
 } // namespace rpg

@@ -28,12 +28,12 @@ struct ObjectBitmap {
 
 std::vector<ObjectBitmap> g_objectBitmaps;
 
-RECT ToScreenRect(RectF rect, float cameraX, float cameraY) {
+RECT ToScreenRect(RectF rect, float cameraX, float cameraY, float zoom) {
     return RECT{
-        static_cast<LONG>(std::round(rect.left - cameraX)),
-        static_cast<LONG>(std::round(rect.top - cameraY)),
-        static_cast<LONG>(std::round(rect.right - cameraX)),
-        static_cast<LONG>(std::round(rect.bottom - cameraY)),
+        static_cast<LONG>(std::round(rect.left * zoom - cameraX)),
+        static_cast<LONG>(std::round(rect.top * zoom - cameraY)),
+        static_cast<LONG>(std::round(rect.right * zoom - cameraX)),
+        static_cast<LONG>(std::round(rect.bottom * zoom - cameraY)),
     };
 }
 
@@ -121,7 +121,7 @@ bool LoadObjectBitmap(HDC hdc, const SceneObjectDef& def, ObjectBitmap& cache) {
     return cache.width > 0 && cache.height > 0;
 }
 
-bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float cameraY) {
+bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float cameraY, float zoom) {
     const SceneObjectDef* def = FindObjectDef(object.type);
     if (!def) {
         return false;
@@ -132,7 +132,7 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
         return false;
     }
 
-    const RECT bounds = ToScreenRect(ObjectVisualBounds(object), cameraX, cameraY);
+    const RECT bounds = ToScreenRect(ObjectVisualBounds(object), cameraX, cameraY, zoom);
     const int width = bounds.right - bounds.left;
     const int height = bounds.bottom - bounds.top;
     if (width <= 0 || height <= 0) {
@@ -183,11 +183,11 @@ ObjectVisual VisualFor(const SceneObject& object) {
 
 } // namespace
 
-void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float cameraY, bool selected) {
-    const int sx = static_cast<int>(std::round(object.pos.x - cameraX));
-    const int sy = static_cast<int>(std::round(object.pos.y - cameraY));
+void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float cameraY, bool selected, float zoom) {
+    const int sx = static_cast<int>(std::round(object.pos.x * zoom - cameraX));
+    const int sy = static_cast<int>(std::round(object.pos.y * zoom - cameraY));
 
-    if (!DrawObjectBitmap(hdc, object, cameraX, cameraY)) {
+    if (!DrawObjectBitmap(hdc, object, cameraX, cameraY, zoom)) {
         switch (VisualFor(object)) {
         case ObjectVisual::TreeOak:
             DrawTree(hdc, sx, sy);
@@ -203,7 +203,7 @@ void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float ca
     }
 
     if (selected) {
-        RECT bounds = ToScreenRect(ObjectVisualBounds(object), cameraX, cameraY);
+        RECT bounds = ToScreenRect(ObjectVisualBounds(object), cameraX, cameraY, zoom);
         HPEN pen = CreatePen(PS_DOT, 1, RGB(255, 247, 122));
         HGDIOBJ oldPen = SelectObject(hdc, pen);
         HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
@@ -214,7 +214,7 @@ void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float ca
     }
 }
 
-void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX, float cameraY, COLORREF color) {
+void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX, float cameraY, COLORREF color, float zoom) {
     if (!object.collision.blocks || object.collision.shape == CollisionShape::None) {
         return;
     }
@@ -224,12 +224,12 @@ void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX,
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
     if (object.collision.shape == CollisionShape::Rect) {
-        RECT rect = ToScreenRect(ObjectCollisionRect(object), cameraX, cameraY);
+        RECT rect = ToScreenRect(ObjectCollisionRect(object), cameraX, cameraY, zoom);
         Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
     } else if (object.collision.shape == CollisionShape::Circle) {
-        const int cx = static_cast<int>(std::round(object.pos.x + object.collision.x - cameraX));
-        const int cy = static_cast<int>(std::round(object.pos.y + object.collision.y - cameraY));
-        const int r = static_cast<int>(std::round(object.collision.radius));
+        const int cx = static_cast<int>(std::round((object.pos.x + object.collision.x) * zoom - cameraX));
+        const int cy = static_cast<int>(std::round((object.pos.y + object.collision.y) * zoom - cameraY));
+        const int r = static_cast<int>(std::round(object.collision.radius * zoom));
         Ellipse(hdc, cx - r, cy - r, cx + r, cy + r);
     }
 

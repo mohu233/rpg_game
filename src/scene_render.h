@@ -6,8 +6,8 @@
 
 namespace rpg {
 
-void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float cameraY, bool selected = false);
-void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX, float cameraY, COLORREF color);
+void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float cameraY, bool selected = false, float zoom = 1.0f);
+void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX, float cameraY, COLORREF color, float zoom = 1.0f);
 void ReleaseSceneRenderResources();
 
 } // namespace rpg
