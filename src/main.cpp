@@ -79,6 +79,9 @@ constexpr std::array<Npc, 3> kNpcs = {{
 Game g_game;
 std::filesystem::path g_requestedScenePath;
 SpriteSheet g_playerSprite;
+SpriteSheet g_playerRunFront;
+SpriteSheet g_playerRunBack;
+std::array<SpriteSheet, 3> g_playerIdleSprites;
 
 struct BackgroundCache {
     std::wstring path;
@@ -214,13 +217,13 @@ void TryMove(Player& player, Vec2 delta) {
     }
 }
 
-void LoadPlayerSprite(HDC target) {
-    if (g_playerSprite.loaded) {
+void LoadSpriteSheet(SpriteSheet& sprite, const std::filesystem::path& path, HDC target) {
+    if (sprite.loaded) {
         return;
     }
 
-    const std::wstring spritePath = AssetPath(L"player_walk.bmp").wstring();
-    g_playerSprite.bitmap = static_cast<HBITMAP>(LoadImageW(
+    const std::wstring spritePath = path.wstring();
+    sprite.bitmap = static_cast<HBITMAP>(LoadImageW(
         nullptr,
         spritePath.c_str(),
         IMAGE_BITMAP,
@@ -228,14 +231,23 @@ void LoadPlayerSprite(HDC target) {
         0,
         LR_LOADFROMFILE));
 
-    if (!g_playerSprite.bitmap) {
-        g_playerSprite.loaded = true;
+    if (!sprite.bitmap) {
+        sprite.loaded = true;
         return;
     }
 
-    g_playerSprite.dc = CreateCompatibleDC(target);
-    SelectObject(g_playerSprite.dc, g_playerSprite.bitmap);
-    g_playerSprite.loaded = true;
+    sprite.dc = CreateCompatibleDC(target);
+    SelectObject(sprite.dc, sprite.bitmap);
+    sprite.loaded = true;
+}
+
+void LoadPlayerSprites(HDC target) {
+    LoadSpriteSheet(g_playerSprite, AssetPath(L"player_walk.bmp"), target);
+    LoadSpriteSheet(g_playerRunFront, AssetPath(L"player_walk_front.bmp"), target);
+    LoadSpriteSheet(g_playerRunBack, AssetPath(L"player_walk_back.bmp"), target);
+    LoadSpriteSheet(g_playerIdleSprites[0], AssetPath(L"player_idle_front.bmp"), target);
+    LoadSpriteSheet(g_playerIdleSprites[1], AssetPath(L"player_idle_side.bmp"), target);
+    LoadSpriteSheet(g_playerIdleSprites[2], AssetPath(L"player_idle_back.bmp"), target);
 }
 
 void LoadGameScene() {
@@ -403,17 +415,34 @@ void DrawEllipse(HDC hdc, Vec2 center, float rx, float ry, COLORREF fill, COLORR
 }
 
 void DrawPlayer(HDC hdc) {
-    LoadPlayerSprite(hdc);
-    if (!g_playerSprite.bitmap || !g_playerSprite.dc) {
+    LoadPlayerSprites(hdc);
+    const bool moving = std::fabs(g_game.player.vel.x) + std::fabs(g_game.player.vel.y) > 1.0f;
+    const int idleIndex = g_game.player.dir == 0 ? 0 : (g_game.player.dir == 3 ? 2 : 1);
+    const SpriteSheet* sprite = moving ? &g_playerSprite : &g_playerIdleSprites[idleIndex];
+    int frameCount = kSideWalkFrames;
+    if (moving && g_game.player.dir == 0 && g_playerRunFront.bitmap && g_playerRunFront.dc) {
+        sprite = &g_playerRunFront;
+        frameCount = 4;
+    } else if (moving && g_game.player.dir == 3 && g_playerRunBack.bitmap && g_playerRunBack.dc) {
+        sprite = &g_playerRunBack;
+        frameCount = 4;
+    }
+    if (!sprite->bitmap || !sprite->dc) {
         DrawEllipse(hdc, g_game.player.pos, kPlayerRadius, 20.0f, RGB(93, 176, 219), RGB(22, 73, 96));
         return;
     }
 
-    const bool moving = std::fabs(g_game.player.vel.x) + std::fabs(g_game.player.vel.y) > 1.0f;
-    // The current player sheet contains only the eight side-run frames.
-    const int frameCount = kSideWalkFrames;
-    const int frame = moving ? (static_cast<int>(g_game.player.animTime * 10.0f) % frameCount) : 0;
-    const bool mirror = g_game.player.dir == 1;
+    // const int frame = moving ? (static_cast<int>(g_game.player.animTime * 5.0f) % frameCount) : 0;
+    const float animationSpeed =
+    (moving && (g_game.player.dir == 0 || g_game.player.dir == 3))
+        ? 5.0f
+        : 10.0f;
+
+    const int frame = moving
+        ? (static_cast<int>(g_game.player.animTime * animationSpeed) % frameCount)
+        : 0;
+
+    const bool mirror = moving ? g_game.player.dir == 1 : g_game.player.dir == 2;
 
     const int sx = (frame % 4) * kSpriteFrameSize;
     const int sy = (frame / 4) * kSpriteFrameSize;
@@ -434,7 +463,7 @@ void DrawPlayer(HDC hdc) {
             0,
             kSpriteFrameSize,
             kSpriteFrameSize,
-            g_playerSprite.dc,
+             sprite->dc,
             sx + kSpriteFrameSize,
             sy,
             -kSpriteFrameSize,
@@ -466,7 +495,7 @@ void DrawPlayer(HDC hdc) {
         dy,
         kSpriteDrawSize,
         kSpriteDrawSize,
-        g_playerSprite.dc,
+         sprite->dc,
         sx,
         sy,
         kSpriteFrameSize,
@@ -631,6 +660,26 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_playerSprite.bitmap) {
             DeleteObject(g_playerSprite.bitmap);
             g_playerSprite.bitmap = nullptr;
+        }
+        for (SpriteSheet* sprite : {&g_playerRunFront, &g_playerRunBack}) {
+            if (sprite->dc) {
+                DeleteDC(sprite->dc);
+                sprite->dc = nullptr;
+            }
+            if (sprite->bitmap) {
+                DeleteObject(sprite->bitmap);
+                sprite->bitmap = nullptr;
+            }
+        }
+        for (SpriteSheet& sprite : g_playerIdleSprites) {
+            if (sprite.dc) {
+                DeleteDC(sprite.dc);
+                sprite.dc = nullptr;
+            }
+            if (sprite.bitmap) {
+                DeleteObject(sprite.bitmap);
+                sprite.bitmap = nullptr;
+            }
         }
         PostQuitMessage(0);
         return 0;
