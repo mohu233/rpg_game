@@ -32,7 +32,9 @@
       "id": "obj_1",
       "type": "teleport_point",
       "x": 31.0,
-      "y": 275.0
+      "y": 275.0,
+      "target_scene": "maps/demo_scene.json",
+      "target_id": "obj_19"
     }
   ]
 }

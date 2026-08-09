@@ -49,14 +49,6 @@
   "background_image": "D:/Administrator/Documents/空白地图.png",
   "objects": [
     {
-      "id": "portal_village",
-      "type": "teleport_point",
-      "x": 186.0,
-      "y": 115.0,
-      "target_scene": "maps/demo_scene.json",
-      "target_id": "obj_14"
-    },
-    {
       "id": "obj_1",
       "group": "obj_1",
       "type": "exotic_tree_01_shadow",
@@ -141,10 +133,12 @@
       "y": 613.0
     },
     {
-      "id": "obj_14",
+      "id": "obj_15",
       "type": "teleport_point",
-      "x": 35.0,
-      "y": 335.0
+      "x": 24.0,
+      "y": 384.0,
+      "target_scene": "maps/demo_scene.json",
+      "target_id": "obj_20"
     }
   ]
 }

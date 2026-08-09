@@ -50,14 +50,6 @@
   "background_image": "D:/Administrator/Documents/空白地图.png",
   "objects": [
     {
-      "id": "portal_demo",
-      "type": "teleport_point",
-      "x": 300.0,
-      "y": 170.0,
-      "target_scene": "maps/village_square.json",
-      "target_id": "portal_village"
-    },
-    {
       "id": "obj_1",
       "group": "obj_1",
       "type": "exotic_tree_01_shadow",
@@ -142,12 +134,28 @@
       "y": 613.0
     },
     {
-      "id": "obj_14",
+      "id": "obj_18",
       "type": "teleport_point",
-      "x": 20.0,
-      "y": 299.0,
+      "x": 24.0,
+      "y": 336.0,
+      "target_scene": "maps/new_map_1.json",
+      "target_id": "obj_1"
+    },
+    {
+      "id": "obj_19",
+      "type": "teleport_point",
+      "x": 24.0,
+      "y": 384.0,
+      "target_scene": "maps/new_map_1.json",
+      "target_id": "obj_1"
+    },
+    {
+      "id": "obj_20",
+      "type": "teleport_point",
+      "x": 24.0,
+      "y": 432.0,
       "target_scene": "maps/village_square.json",
-      "target_id": "portal_village"
+      "target_id": "obj_15"
     }
   ]
 }

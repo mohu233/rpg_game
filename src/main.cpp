@@ -43,8 +43,7 @@ struct Player {
 };
 
 struct SpriteSheet {
-    HBITMAP bitmap = nullptr;
-    HDC dc = nullptr;
+    std::unique_ptr<Gdiplus::Bitmap> bitmap;
     bool loaded = false;
 };
 
@@ -217,37 +216,31 @@ void TryMove(Player& player, Vec2 delta) {
     }
 }
 
-void LoadSpriteSheet(SpriteSheet& sprite, const std::filesystem::path& path, HDC target) {
+void LoadSpriteSheet(SpriteSheet& sprite, const std::filesystem::path& path) {
     if (sprite.loaded) {
         return;
     }
 
-    const std::wstring spritePath = path.wstring();
-    sprite.bitmap = static_cast<HBITMAP>(LoadImageW(
-        nullptr,
-        spritePath.c_str(),
-        IMAGE_BITMAP,
-        0,
-        0,
-        LR_LOADFROMFILE));
-
-    if (!sprite.bitmap) {
-        sprite.loaded = true;
+    sprite.loaded = true;
+    if (!EnsureGdiPlus()) {
         return;
     }
 
-    sprite.dc = CreateCompatibleDC(target);
-    SelectObject(sprite.dc, sprite.bitmap);
-    sprite.loaded = true;
+    const std::wstring spritePath = path.wstring();
+    sprite.bitmap = std::make_unique<Gdiplus::Bitmap>(spritePath.c_str());
+    if (!sprite.bitmap || sprite.bitmap->GetLastStatus() != Gdiplus::Ok) {
+        sprite.bitmap.reset();
+        OutputDebugStringW((L"sprite:load-fail path=" + spritePath + L"\n").c_str());
+    }
 }
 
-void LoadPlayerSprites(HDC target) {
-    LoadSpriteSheet(g_playerSprite, AssetPath(L"player_walk.bmp"), target);
-    LoadSpriteSheet(g_playerRunFront, AssetPath(L"player_walk_front.bmp"), target);
-    LoadSpriteSheet(g_playerRunBack, AssetPath(L"player_walk_back.bmp"), target);
-    LoadSpriteSheet(g_playerIdleSprites[0], AssetPath(L"player_idle_front.bmp"), target);
-    LoadSpriteSheet(g_playerIdleSprites[1], AssetPath(L"player_idle_side.bmp"), target);
-    LoadSpriteSheet(g_playerIdleSprites[2], AssetPath(L"player_idle_back.bmp"), target);
+void LoadPlayerSprites() {
+    LoadSpriteSheet(g_playerSprite, AssetPath(L"player_walk_side_8.png"));
+    LoadSpriteSheet(g_playerRunFront, AssetPath(L"player_walk_front.png"));
+    LoadSpriteSheet(g_playerRunBack, AssetPath(L"player_walk_back.png"));
+    LoadSpriteSheet(g_playerIdleSprites[0], AssetPath(L"player_idle_front.png"));
+    LoadSpriteSheet(g_playerIdleSprites[1], AssetPath(L"player_idle_side.png"));
+    LoadSpriteSheet(g_playerIdleSprites[2], AssetPath(L"player_idle_back.png"));
 }
 
 void LoadGameScene() {
@@ -415,19 +408,19 @@ void DrawEllipse(HDC hdc, Vec2 center, float rx, float ry, COLORREF fill, COLORR
 }
 
 void DrawPlayer(HDC hdc) {
-    LoadPlayerSprites(hdc);
+    LoadPlayerSprites();
     const bool moving = std::fabs(g_game.player.vel.x) + std::fabs(g_game.player.vel.y) > 1.0f;
     const int idleIndex = g_game.player.dir == 0 ? 0 : (g_game.player.dir == 3 ? 2 : 1);
     const SpriteSheet* sprite = moving ? &g_playerSprite : &g_playerIdleSprites[idleIndex];
     int frameCount = kSideWalkFrames;
-    if (moving && g_game.player.dir == 0 && g_playerRunFront.bitmap && g_playerRunFront.dc) {
+    if (moving && g_game.player.dir == 0 && g_playerRunFront.bitmap) {
         sprite = &g_playerRunFront;
         frameCount = 4;
-    } else if (moving && g_game.player.dir == 3 && g_playerRunBack.bitmap && g_playerRunBack.dc) {
+    } else if (moving && g_game.player.dir == 3 && g_playerRunBack.bitmap) {
         sprite = &g_playerRunBack;
         frameCount = 4;
     }
-    if (!sprite->bitmap || !sprite->dc) {
+    if (!sprite->bitmap) {
         DrawEllipse(hdc, g_game.player.pos, kPlayerRadius, 20.0f, RGB(93, 176, 219), RGB(22, 73, 96));
         return;
     }
@@ -450,57 +443,38 @@ void DrawPlayer(HDC hdc) {
     const int dx = static_cast<int>(std::round(g_game.player.pos.x - g_game.camera.x - kSpriteDrawSize * 0.5f));
     const int dy = static_cast<int>(std::round(g_game.player.pos.y - g_game.camera.y - kSpriteDrawSize + 12));
 
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+
     if (mirror) {
-        HDC mirrorDc = CreateCompatibleDC(hdc);
-        HBITMAP mirrorBitmap = CreateCompatibleBitmap(hdc, kSpriteFrameSize, kSpriteFrameSize);
-        HGDIOBJ oldBitmap = SelectObject(mirrorDc, mirrorBitmap);
-        RECT clearRect{0, 0, kSpriteFrameSize, kSpriteFrameSize};
-        FillRectColor(mirrorDc, clearRect, RGB(255, 0, 255));
-        SetStretchBltMode(mirrorDc, COLORONCOLOR);
-        StretchBlt(
-            mirrorDc,
-            0,
-            0,
-            kSpriteFrameSize,
-            kSpriteFrameSize,
-             sprite->dc,
-            sx + kSpriteFrameSize,
+        const Gdiplus::GraphicsState state = graphics.Save();
+        graphics.TranslateTransform(
+            static_cast<float>(dx + kSpriteDrawSize),
+            static_cast<float>(dy));
+        graphics.ScaleTransform(-1.0f, 1.0f);
+        graphics.DrawImage(
+            sprite->bitmap.get(),
+            Gdiplus::Rect(0, 0, kSpriteDrawSize, kSpriteDrawSize),
+            sx,
             sy,
-            -kSpriteFrameSize,
-            kSpriteFrameSize,
-            SRCCOPY);
-
-        TransparentBlt(
-            hdc,
-            dx,
-            dy,
-            kSpriteDrawSize,
-            kSpriteDrawSize,
-            mirrorDc,
-            0,
-            0,
             kSpriteFrameSize,
             kSpriteFrameSize,
-            RGB(255, 0, 255));
-
-        SelectObject(mirrorDc, oldBitmap);
-        DeleteObject(mirrorBitmap);
-        DeleteDC(mirrorDc);
+            Gdiplus::UnitPixel);
+        graphics.Restore(state);
         return;
     }
 
-    TransparentBlt(
-        hdc,
-        dx,
-        dy,
-        kSpriteDrawSize,
-        kSpriteDrawSize,
-         sprite->dc,
+    graphics.DrawImage(
+        sprite->bitmap.get(),
+        Gdiplus::Rect(dx, dy, kSpriteDrawSize, kSpriteDrawSize),
         sx,
         sy,
         kSpriteFrameSize,
         kSpriteFrameSize,
-        RGB(255, 0, 255));
+        Gdiplus::UnitPixel);
 }
 
 void DrawTextLine(HDC hdc, const std::wstring& text, int x, int y, COLORREF color) {
@@ -647,39 +621,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         KillTimer(hwnd, kFrameTimer);
         ReleaseBackgroundResources();
+        rpg::ReleaseSceneRenderResources();
+        rpg::ReleaseTerrainRenderResources();
+        for (SpriteSheet& sprite : g_playerIdleSprites) {
+            sprite.bitmap.reset();
+            sprite.loaded = false;
+        }
+        for (SpriteSheet* sprite : {&g_playerSprite, &g_playerRunFront, &g_playerRunBack}) {
+            sprite->bitmap.reset();
+            sprite->loaded = false;
+        }
         if (g_gdiplusToken != 0) {
             Gdiplus::GdiplusShutdown(g_gdiplusToken);
             g_gdiplusToken = 0;
-        }
-        rpg::ReleaseSceneRenderResources();
-        rpg::ReleaseTerrainRenderResources();
-        if (g_playerSprite.dc) {
-            DeleteDC(g_playerSprite.dc);
-            g_playerSprite.dc = nullptr;
-        }
-        if (g_playerSprite.bitmap) {
-            DeleteObject(g_playerSprite.bitmap);
-            g_playerSprite.bitmap = nullptr;
-        }
-        for (SpriteSheet* sprite : {&g_playerRunFront, &g_playerRunBack}) {
-            if (sprite->dc) {
-                DeleteDC(sprite->dc);
-                sprite->dc = nullptr;
-            }
-            if (sprite->bitmap) {
-                DeleteObject(sprite->bitmap);
-                sprite->bitmap = nullptr;
-            }
-        }
-        for (SpriteSheet& sprite : g_playerIdleSprites) {
-            if (sprite.dc) {
-                DeleteDC(sprite.dc);
-                sprite.dc = nullptr;
-            }
-            if (sprite.bitmap) {
-                DeleteObject(sprite.bitmap);
-                sprite.bitmap = nullptr;
-            }
         }
         PostQuitMessage(0);
         return 0;

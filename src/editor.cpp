@@ -32,6 +32,7 @@ constexpr int kPaletteRowHeight = 56;
 constexpr int kPaletteFooterHeight = 350;
 constexpr int kMinimumMapViewportWidth = 480;
 constexpr int kTileSize = rpg::kTileSize;
+constexpr std::string_view kTeleportObjectType = "teleport_point";
 
 #ifndef RPG_ASSET_DIR
 #define RPG_ASSET_DIR L"assets"
@@ -104,6 +105,7 @@ struct EditorState {
     std::string selectedType = "tree_oak";
     std::string selectedNatural = "grass";
     std::string selectedBuilt = "stone_floor";
+    std::string selectedBuiltObject;
     int selectedObject = -1;
     int nextObjectId = 1;
     bool dragging = false;
@@ -810,7 +812,7 @@ rpg::Vec2 ScreenToWorld(int x, int y) {
 std::vector<const rpg::SceneObjectDef*> PlaceableObjectDefs() {
     std::vector<const rpg::SceneObjectDef*> defs;
     for (const rpg::SceneObjectDef& def : rpg::ObjectDefs()) {
-        if (def.placeable) {
+        if (def.placeable && def.type != kTeleportObjectType) {
             defs.push_back(&def);
         }
     }
@@ -824,7 +826,7 @@ int PaletteItemCount() {
     case EditorMode::Natural:
         return static_cast<int>(rpg::NaturalTerrainDefs().size()) + 1;
     case EditorMode::Built:
-        return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 1;
+        return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 2;
     case EditorMode::Objects:
     default:
         return static_cast<int>(PlaceableObjectDefs().size());
@@ -837,6 +839,10 @@ int PaletteTabHitTest(int x, int y) {
     }
     const int tabWidth = (kPaletteWidth - 16) / 4;
     return std::min(3, (x - 8) / tabWidth);
+}
+
+int BuiltTeleportPaletteIndex() {
+    return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 1;
 }
 
 void ClampPaletteScroll(HWND hwnd) {
@@ -1187,23 +1193,23 @@ void BeginTeleportLink() {
     g_editor.status = L"请选择目标地图，再点击目标传送点";
 }
 
-void CompleteTeleportLink(int targetIndex) {
+bool CompleteTeleportLink(HWND hwnd, int targetIndex) {
     if (!g_editor.linkingTeleport || targetIndex < 0 ||
         targetIndex >= static_cast<int>(g_editor.scene.objects.size())) {
-        return;
+        return false;
     }
 
     rpg::SceneObject& target = g_editor.scene.objects[targetIndex];
     if (!rpg::ObjectIsTeleport(target)) {
         g_editor.status = L"目标对象不是传送点";
-        return;
+        return false;
     }
 
     const std::filesystem::path sourceScene = g_editor.linkSourceScene;
     const std::string sourceId = g_editor.linkSourceId;
     if (sourceScene.lexically_normal() == g_editor.scenePath.lexically_normal() && sourceId == target.id) {
         g_editor.status = L"不能连接到传送点自身";
-        return;
+        return false;
     }
 
     const std::string targetScenePath = StoreScenePath(g_editor.scenePath);
@@ -1238,7 +1244,7 @@ void CompleteTeleportLink(int targetIndex) {
     std::string targetError;
     if (!sourceUpdated || !rpg::SaveSceneToFile(g_editor.scenePath, g_editor.scene, &targetError)) {
         g_editor.status = L"传送点连接保存失败";
-        return;
+        return false;
     }
 
     g_editor.dirty = false;
@@ -1247,6 +1253,8 @@ void CompleteTeleportLink(int targetIndex) {
     g_editor.linkSourceId.clear();
     g_editor.selectedObject = targetIndex;
     g_editor.status = L"传送点已双向连接";
+    MessageBoxW(hwnd, L"传送点已双向连接。", L"连接成功", MB_OK | MB_ICONINFORMATION);
+    return true;
 }
 
 void LoadSceneDialog(HWND hwnd) {
@@ -1296,8 +1304,9 @@ bool ClearBackgroundImage() {
     return true;
 }
 
-void AddObjectAt(rpg::Vec2 point) {
-    const rpg::SceneObjectDef* def = rpg::FindObjectDef(g_editor.selectedType);
+void AddObjectAt(rpg::Vec2 point, std::string_view type = {}) {
+    const std::string objectType = type.empty() ? g_editor.selectedType : std::string(type);
+    const rpg::SceneObjectDef* def = rpg::FindObjectDef(objectType);
     if (!def || !def->placeable) {
         g_editor.status = L"未选择有效对象类型";
         return;
@@ -1306,7 +1315,7 @@ void AddObjectAt(rpg::Vec2 point) {
     point.x = Clamp(point.x, 0.0f, rpg::SceneWorldWidth(g_editor.scene));
     point.y = Clamp(point.y, 0.0f, rpg::SceneWorldHeight(g_editor.scene));
 
-    rpg::SceneObject object = rpg::MakeObject(g_editor.selectedType, point, g_editor.nextObjectId++);
+    rpg::SceneObject object = rpg::MakeObject(objectType, point, g_editor.nextObjectId++);
     const std::string groupId = object.id;
     if (!def->companionType.empty() && rpg::FindObjectDef(def->companionType)) {
         object.groupId = groupId;
@@ -1327,6 +1336,15 @@ void AddObjectAt(rpg::Vec2 point) {
     g_editor.dragStartWorld = point;
     g_editor.dragStartObject = point;
     MarkDirty(L"已放置对象");
+}
+
+rpg::Vec2 TileCenterBottom(rpg::Vec2 point) {
+    const int tx = std::clamp(static_cast<int>(std::floor(point.x / kTileSize)), 0, g_editor.scene.mapWidth - 1);
+    const int ty = std::clamp(static_cast<int>(std::floor(point.y / kTileSize)), 0, g_editor.scene.mapHeight - 1);
+    return {
+        (static_cast<float>(tx) + 0.5f) * kTileSize,
+        (static_cast<float>(ty) + 1.0f) * kTileSize,
+    };
 }
 
 void DeleteSelectedObject() {
@@ -1532,11 +1550,19 @@ void DrawPalette(HDC hdc, const RECT& client) {
                 showSwatch = true;
             }
         } else {
-            const rpg::TerrainDef* terrain = BuiltTerrainForIndex(i);
-            selected = terrain ? terrain->id == g_editor.selectedBuilt : g_editor.selectedBuilt == "none";
-            label = terrain ? terrain->displayName : L"擦除";
-            swatch = terrain ? rpg::TerrainFallbackColor(*terrain) : RGB(34, 42, 45);
-            showSwatch = true;
+            if (i == BuiltTeleportPaletteIndex()) {
+                selected = g_editor.selectedBuiltObject == kTeleportObjectType;
+                label = L"传送点";
+                swatch = RGB(73, 183, 221);
+                showSwatch = true;
+            } else {
+                const rpg::TerrainDef* terrain = BuiltTerrainForIndex(i);
+                selected = g_editor.selectedBuiltObject.empty() &&
+                    (terrain ? terrain->id == g_editor.selectedBuilt : g_editor.selectedBuilt == "none");
+                label = terrain ? terrain->displayName : L"擦除";
+                swatch = terrain ? rpg::TerrainFallbackColor(*terrain) : RGB(34, 42, 45);
+                showSwatch = true;
+            }
         }
 
         const int rowY = kPaletteFirstY + i * kPaletteRowHeight - g_editor.paletteScroll;
@@ -1777,6 +1803,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_editor.mode == EditorMode::Maps) {
                 if (hit < static_cast<int>(g_editor.maps.size())) {
                     LoadEditorSceneFromPath(g_editor.maps[hit].path);
+                    if (g_editor.linkingTeleport) {
+                        g_editor.mode = EditorMode::Built;
+                        g_editor.selectedObject = -1;
+                        g_editor.paletteScroll = 0;
+                        g_editor.status = L"已选择地图，请点击目标传送点";
+                    }
                 }
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
@@ -1792,9 +1824,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     g_editor.selectedNatural = terrain->id;
                 }
             } else {
-                if (const rpg::TerrainDef* terrain = BuiltTerrainForIndex(hit)) {
+                if (hit == BuiltTeleportPaletteIndex()) {
+                    g_editor.selectedBuiltObject = std::string(kTeleportObjectType);
+                    g_editor.selectedType = std::string(kTeleportObjectType);
+                    g_editor.status = L"已选择传送点，点击地格放置方形传送点";
+                } else if (const rpg::TerrainDef* terrain = BuiltTerrainForIndex(hit)) {
+                    g_editor.selectedBuiltObject.clear();
                     g_editor.selectedBuilt = terrain->id;
                 } else {
+                    g_editor.selectedBuiltObject.clear();
                     g_editor.selectedBuilt = "none";
                 }
             }
@@ -1814,13 +1852,44 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
             const rpg::Vec2 world = ScreenToWorld(x, y);
-            if (g_editor.mode == EditorMode::Objects) {
+            if (g_editor.linkingTeleport) {
+                const int objectIndex = HitObject(world);
+                if (objectIndex >= 0) {
+                    CompleteTeleportLink(hwnd, objectIndex);
+                } else {
+                    g_editor.status = L"请点击目标传送点完成连接";
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+
+            const bool placingBuiltTeleport =
+                g_editor.mode == EditorMode::Built &&
+                g_editor.selectedBuiltObject == kTeleportObjectType;
+            bool placedBuiltTeleport = false;
+            if (g_editor.mode == EditorMode::Built) {
+                const int objectIndex = HitObject(world);
+                if (objectIndex >= 0 && rpg::ObjectIsTeleport(g_editor.scene.objects[objectIndex])) {
+                    g_editor.selectedObject = objectIndex;
+                    g_editor.dragging = true;
+                    g_editor.dragStartWorld = world;
+                    g_editor.dragStartObject = g_editor.scene.objects[objectIndex].pos;
+                    g_editor.status = L"已选中传送点，可拖动或连接";
+                } else if (placingBuiltTeleport) {
+                    AddObjectAt(TileCenterBottom(world), kTeleportObjectType);
+                    g_editor.dragging = false;
+                    placedBuiltTeleport = true;
+                    g_editor.status = L"已放置传送点，请选中后点击“连接传送点”";
+                } else {
+                    g_editor.paintingTerrain = true;
+                    g_editor.lastPaintTileX = -1;
+                    g_editor.lastPaintTileY = -1;
+                    PaintTerrainAt(world);
+                }
+            } else if (g_editor.mode == EditorMode::Objects) {
                 const int objectIndex = HitObject(world);
                 if (objectIndex >= 0) {
                     g_editor.selectedObject = objectIndex;
-                    if (g_editor.linkingTeleport && rpg::ObjectIsTeleport(g_editor.scene.objects[objectIndex])) {
-                        CompleteTeleportLink(objectIndex);
-                    }
                     g_editor.dragging = true;
                     g_editor.dragStartWorld = world;
                     g_editor.dragStartObject = g_editor.scene.objects[objectIndex].pos;
@@ -1828,7 +1897,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 } else {
                     AddObjectAt(world);
                 }
-            } else if (g_editor.mode == EditorMode::Natural || g_editor.mode == EditorMode::Built) {
+            } else if (g_editor.mode == EditorMode::Natural) {
                 g_editor.paintingTerrain = true;
                 g_editor.lastPaintTileX = -1;
                 g_editor.lastPaintTileY = -1;
@@ -1836,7 +1905,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             } else {
                 return 0;
             }
-            SetCapture(hwnd);
+            if (!placedBuiltTeleport && (g_editor.dragging || g_editor.paintingTerrain)) {
+                SetCapture(hwnd);
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
