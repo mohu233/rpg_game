@@ -20,9 +20,14 @@ constexpr int kWindowHeight = 640;
 constexpr int kTileSize = rpg::kTileSize;
 constexpr float kPlayerRadius = 16.0f;
 constexpr float kPlayerSpeed = 190.0f;
-constexpr int kSpriteFrameSize = 96;
+constexpr float kWorldScale = 3.0f;
+constexpr int kSpriteFrameSize = 288;
 constexpr int kSpriteDrawSize = 96;
 constexpr int kSideWalkFrames = 8;
+constexpr float kDefaultZoom = 1.0f / kWorldScale;
+constexpr float kMinimumZoom = kDefaultZoom;
+constexpr float kMaximumZoom = 1.0f;
+constexpr float kZoomStep = 1.0f / 6.0f;
 constexpr UINT_PTR kFrameTimer = 1;
 constexpr UINT kFrameMs = 16;
 
@@ -57,6 +62,7 @@ struct Game {
     Player player;
     rpg::Scene scene;
     Vec2 camera{};
+    float zoom = kDefaultZoom;
     bool up = false;
     bool down = false;
     bool left = false;
@@ -81,6 +87,10 @@ SpriteSheet g_playerSprite;
 SpriteSheet g_playerRunFront;
 SpriteSheet g_playerRunBack;
 std::array<SpriteSheet, 3> g_playerIdleSprites;
+
+float RenderScale() {
+    return kWorldScale * g_game.zoom;
+}
 
 struct BackgroundCache {
     std::wstring path;
@@ -177,8 +187,8 @@ bool DrawBackgroundImage(HDC hdc) {
     const Gdiplus::Rect destination(
         static_cast<INT>(std::round(-g_game.camera.x)),
         static_cast<INT>(std::round(-g_game.camera.y)),
-         static_cast<INT>(std::round(rpg::SceneWorldWidth(g_game.scene))),
-         static_cast<INT>(std::round(rpg::SceneWorldHeight(g_game.scene))));
+        static_cast<INT>(std::round(rpg::SceneWorldWidth(g_game.scene) * RenderScale())),
+        static_cast<INT>(std::round(rpg::SceneWorldHeight(g_game.scene) * RenderScale())));
     return graphics.DrawImage(
                bitmap,
                destination,
@@ -369,18 +379,25 @@ void UpdateGame(float dt) {
     }
     g_game.interact = false;
 
-    const float worldW = rpg::SceneWorldWidth(g_game.scene);
-    const float worldH = rpg::SceneWorldHeight(g_game.scene);
-    g_game.camera.x = Clamp(g_game.player.pos.x - kWindowWidth * 0.5f, 0.0f, std::max(0.0f, worldW - kWindowWidth));
-    g_game.camera.y = Clamp(g_game.player.pos.y - kWindowHeight * 0.5f, 0.0f, std::max(0.0f, worldH - kWindowHeight));
+    const float renderScale = RenderScale();
+    const float worldW = rpg::SceneWorldWidth(g_game.scene) * renderScale;
+    const float worldH = rpg::SceneWorldHeight(g_game.scene) * renderScale;
+    g_game.camera.x = Clamp(
+        g_game.player.pos.x * renderScale - kWindowWidth * 0.5f,
+        0.0f,
+        std::max(0.0f, worldW - kWindowWidth));
+    g_game.camera.y = Clamp(
+        g_game.player.pos.y * renderScale - kWindowHeight * 0.5f,
+        0.0f,
+        std::max(0.0f, worldH - kWindowHeight));
 }
 
 RECT WorldRect(float x, float y, float w, float h) {
     return RECT{
-        static_cast<LONG>(std::round(x - g_game.camera.x)),
-        static_cast<LONG>(std::round(y - g_game.camera.y)),
-        static_cast<LONG>(std::round(x + w - g_game.camera.x)),
-        static_cast<LONG>(std::round(y + h - g_game.camera.y)),
+        static_cast<LONG>(std::round(x * RenderScale() - g_game.camera.x)),
+        static_cast<LONG>(std::round(y * RenderScale() - g_game.camera.y)),
+        static_cast<LONG>(std::round((x + w) * RenderScale() - g_game.camera.x)),
+        static_cast<LONG>(std::round((y + h) * RenderScale() - g_game.camera.y)),
     };
 }
 
@@ -397,10 +414,10 @@ void DrawEllipse(HDC hdc, Vec2 center, float rx, float ry, COLORREF fill, COLORR
     HGDIOBJ oldPen = SelectObject(hdc, pen);
     Ellipse(
         hdc,
-        static_cast<int>(center.x - rx - g_game.camera.x),
-        static_cast<int>(center.y - ry - g_game.camera.y),
-        static_cast<int>(center.x + rx - g_game.camera.x),
-        static_cast<int>(center.y + ry - g_game.camera.y));
+        static_cast<int>(std::round((center.x - rx) * RenderScale() - g_game.camera.x)),
+        static_cast<int>(std::round((center.y - ry) * RenderScale() - g_game.camera.y)),
+        static_cast<int>(std::round((center.x + rx) * RenderScale() - g_game.camera.x)),
+        static_cast<int>(std::round((center.y + ry) * RenderScale() - g_game.camera.y)));
     SelectObject(hdc, oldBrush);
     SelectObject(hdc, oldPen);
     DeleteObject(brush);
@@ -440,8 +457,12 @@ void DrawPlayer(HDC hdc) {
     const int sx = (frame % 4) * kSpriteFrameSize;
     const int sy = (frame / 4) * kSpriteFrameSize;
 
-    const int dx = static_cast<int>(std::round(g_game.player.pos.x - g_game.camera.x - kSpriteDrawSize * 0.5f));
-    const int dy = static_cast<int>(std::round(g_game.player.pos.y - g_game.camera.y - kSpriteDrawSize + 12));
+    const float renderScale = RenderScale();
+    const int spriteDrawSize = std::max(1, static_cast<int>(std::round(kSpriteDrawSize * renderScale)));
+    const int dx = static_cast<int>(std::round(
+        g_game.player.pos.x * renderScale - g_game.camera.x - spriteDrawSize * 0.5f));
+    const int dy = static_cast<int>(std::round(
+        g_game.player.pos.y * renderScale - g_game.camera.y - spriteDrawSize + 12.0f * renderScale));
 
     Gdiplus::Graphics graphics(hdc);
     graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
@@ -452,12 +473,12 @@ void DrawPlayer(HDC hdc) {
     if (mirror) {
         const Gdiplus::GraphicsState state = graphics.Save();
         graphics.TranslateTransform(
-            static_cast<float>(dx + kSpriteDrawSize),
+            static_cast<float>(dx + spriteDrawSize),
             static_cast<float>(dy));
         graphics.ScaleTransform(-1.0f, 1.0f);
         graphics.DrawImage(
             sprite->bitmap.get(),
-            Gdiplus::Rect(0, 0, kSpriteDrawSize, kSpriteDrawSize),
+            Gdiplus::Rect(0, 0, spriteDrawSize, spriteDrawSize),
             sx,
             sy,
             kSpriteFrameSize,
@@ -469,7 +490,7 @@ void DrawPlayer(HDC hdc) {
 
     graphics.DrawImage(
         sprite->bitmap.get(),
-        Gdiplus::Rect(dx, dy, kSpriteDrawSize, kSpriteDrawSize),
+        Gdiplus::Rect(dx, dy, spriteDrawSize, spriteDrawSize),
         sx,
         sy,
         kSpriteFrameSize,
@@ -494,7 +515,8 @@ void RenderGame(HWND hwnd, HDC target) {
     FillRectColor(hdc, client, RGB(41, 49, 47));
     DrawBackgroundImage(hdc);
 
-    rpg::DrawTerrain(hdc, g_game.scene, g_game.camera.x, g_game.camera.y);
+    const float renderScale = RenderScale();
+    rpg::DrawTerrain(hdc, g_game.scene, g_game.camera.x, g_game.camera.y, false, renderScale);
 
     std::vector<const rpg::SceneObject*> objects;
     objects.reserve(g_game.scene.objects.size());
@@ -508,18 +530,23 @@ void RenderGame(HWND hwnd, HDC target) {
     const float playerSortY = g_game.player.pos.y;
     for (const rpg::SceneObject* object : objects) {
         if (rpg::ObjectIsGroundOverlay(*object)) {
-            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y);
+            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y, false, renderScale);
         }
     }
 
     for (const Npc& npc : kNpcs) {
         DrawEllipse(hdc, npc.pos, 15.0f, 19.0f, RGB(222, 185, 94), RGB(76, 55, 32));
-        DrawTextLine(hdc, npc.name, static_cast<int>(npc.pos.x - g_game.camera.x - 18), static_cast<int>(npc.pos.y - g_game.camera.y - 38), RGB(245, 244, 230));
+        DrawTextLine(
+            hdc,
+            npc.name,
+            static_cast<int>(std::round(npc.pos.x * renderScale - g_game.camera.x - 18.0f * renderScale)),
+            static_cast<int>(std::round(npc.pos.y * renderScale - g_game.camera.y - 38.0f * renderScale)),
+            RGB(245, 244, 230));
     }
 
     for (const rpg::SceneObject* object : objects) {
         if (!rpg::ObjectIsGroundOverlay(*object) && rpg::ObjectSortY(*object) <= playerSortY) {
-            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y);
+            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y, false, renderScale);
         }
     }
 
@@ -527,11 +554,18 @@ void RenderGame(HWND hwnd, HDC target) {
 
     for (const rpg::SceneObject* object : objects) {
         if (!rpg::ObjectIsGroundOverlay(*object) && rpg::ObjectSortY(*object) > playerSortY) {
-            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y);
+            rpg::DrawSceneObject(hdc, *object, g_game.camera.x, g_game.camera.y, false, renderScale);
         }
     }
 
-    DrawTextLine(hdc, L"WASD / arrow keys to move, E to talk near an NPC", 18, 18, RGB(248, 248, 235));
+    DrawTextLine(
+        hdc,
+        L"WASD / arrow keys to move, E to talk, +/- zoom, 0 reset",
+        18,
+        18,
+        RGB(248, 248, 235));
+    const std::wstring zoomText = L"视角 " + std::to_wstring(static_cast<int>(std::round(renderScale * 100.0f))) + L"%";
+    DrawTextLine(hdc, zoomText, 18, 40, RGB(220, 230, 202));
 
     if (g_game.nearbyNpc >= 0 && !g_game.showTalk) {
         DrawTextLine(hdc, L"Press E", kWindowWidth / 2 - 40, kWindowHeight - 70, RGB(255, 250, 190));
@@ -581,6 +615,23 @@ void SetKey(WPARAM key, bool pressed) {
     case 'E':
         if (pressed) {
             g_game.interact = true;
+        }
+        break;
+    case VK_OEM_PLUS:
+    case VK_ADD:
+        if (pressed) {
+            g_game.zoom = Clamp(g_game.zoom + kZoomStep, kMinimumZoom, kMaximumZoom);
+        }
+        break;
+    case VK_OEM_MINUS:
+    case VK_SUBTRACT:
+        if (pressed) {
+            g_game.zoom = Clamp(g_game.zoom - kZoomStep, kMinimumZoom, kMaximumZoom);
+        }
+        break;
+    case '0':
+        if (pressed) {
+            g_game.zoom = kDefaultZoom;
         }
         break;
     default:
