@@ -75,6 +75,10 @@ struct SceneObjectDef {
     bool placeable = true;
     std::string companionType;
     bool teleport = false;
+    bool building = false;
+    int footprintWidth = 1;
+    int footprintHeight = 1;
+    bool draggable = true;
 };
 
 struct SceneObject {

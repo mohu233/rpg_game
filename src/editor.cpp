@@ -32,7 +32,6 @@ constexpr int kPaletteRowHeight = 56;
 constexpr int kPaletteFooterHeight = 350;
 constexpr int kMinimumMapViewportWidth = 480;
 constexpr int kTileSize = rpg::kTileSize;
-constexpr std::string_view kTeleportObjectType = "teleport_point";
 
 #ifndef RPG_ASSET_DIR
 #define RPG_ASSET_DIR L"assets"
@@ -812,7 +811,17 @@ rpg::Vec2 ScreenToWorld(int x, int y) {
 std::vector<const rpg::SceneObjectDef*> PlaceableObjectDefs() {
     std::vector<const rpg::SceneObjectDef*> defs;
     for (const rpg::SceneObjectDef& def : rpg::ObjectDefs()) {
-        if (def.placeable && def.type != kTeleportObjectType) {
+        if (def.placeable && !def.building) {
+            defs.push_back(&def);
+        }
+    }
+    return defs;
+}
+
+std::vector<const rpg::SceneObjectDef*> BuildingObjectDefs() {
+    std::vector<const rpg::SceneObjectDef*> defs;
+    for (const rpg::SceneObjectDef& def : rpg::ObjectDefs()) {
+        if (def.placeable && def.building) {
             defs.push_back(&def);
         }
     }
@@ -826,7 +835,8 @@ int PaletteItemCount() {
     case EditorMode::Natural:
         return static_cast<int>(rpg::NaturalTerrainDefs().size()) + 1;
     case EditorMode::Built:
-        return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 2;
+        return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 1 +
+            static_cast<int>(BuildingObjectDefs().size());
     case EditorMode::Objects:
     default:
         return static_cast<int>(PlaceableObjectDefs().size());
@@ -839,10 +849,6 @@ int PaletteTabHitTest(int x, int y) {
     }
     const int tabWidth = (kPaletteWidth - 16) / 4;
     return std::min(3, (x - 8) / tabWidth);
-}
-
-int BuiltTeleportPaletteIndex() {
-    return static_cast<int>(rpg::BuiltTerrainDefs().size()) + 1;
 }
 
 void ClampPaletteScroll(HWND hwnd) {
@@ -1332,19 +1338,26 @@ void AddObjectAt(rpg::Vec2 point, std::string_view type = {}) {
             g_editor.status = L"伴随对象未找到";
         }
     }
-    g_editor.dragging = true;
+    g_editor.dragging = def->draggable;
     g_editor.dragStartWorld = point;
     g_editor.dragStartObject = point;
     MarkDirty(L"已放置对象");
 }
 
-rpg::Vec2 TileCenterBottom(rpg::Vec2 point) {
-    const int tx = std::clamp(static_cast<int>(std::floor(point.x / kTileSize)), 0, g_editor.scene.mapWidth - 1);
-    const int ty = std::clamp(static_cast<int>(std::floor(point.y / kTileSize)), 0, g_editor.scene.mapHeight - 1);
+rpg::Vec2 BuildingAnchor(rpg::Vec2 point, const rpg::SceneObjectDef& def) {
+    const int maxTileX = std::max(0, g_editor.scene.mapWidth - def.footprintWidth);
+    const int maxTileY = std::max(0, g_editor.scene.mapHeight - def.footprintHeight);
+    const int tx = std::clamp(static_cast<int>(std::floor(point.x / kTileSize)), 0, maxTileX);
+    const int ty = std::clamp(static_cast<int>(std::floor(point.y / kTileSize)), 0, maxTileY);
     return {
-        (static_cast<float>(tx) + 0.5f) * kTileSize,
-        (static_cast<float>(ty) + 1.0f) * kTileSize,
+        (static_cast<float>(tx) + def.footprintWidth * 0.5f) * kTileSize,
+        (static_cast<float>(ty) + static_cast<float>(def.footprintHeight)) * kTileSize,
     };
+}
+
+bool ObjectCanDrag(const rpg::SceneObject& object) {
+    const rpg::SceneObjectDef* def = rpg::FindObjectDef(object.type);
+    return !def || def->draggable;
 }
 
 void DeleteSelectedObject() {
@@ -1409,6 +1422,11 @@ void RunFooterAction(HWND hwnd, FooterAction action) {
 
 void MoveSelectedObject(rpg::Vec2 point) {
     if (g_editor.selectedObject < 0 || g_editor.selectedObject >= static_cast<int>(g_editor.scene.objects.size())) {
+        return;
+    }
+    if (!ObjectCanDrag(g_editor.scene.objects[g_editor.selectedObject])) {
+        g_editor.dragging = false;
+        g_editor.status = L"该建筑按地格固定，不能拖动";
         return;
     }
 
@@ -1498,6 +1516,13 @@ rpg::TerrainDef const* BuiltTerrainForIndex(int index) {
     return defIndex >= 0 && defIndex < static_cast<int>(defs.size()) ? &defs[defIndex] : nullptr;
 }
 
+const rpg::SceneObjectDef* BuiltObjectForIndex(int index) {
+    const int firstIndex = static_cast<int>(rpg::BuiltTerrainDefs().size()) + 1;
+    const int defIndex = index - firstIndex;
+    const auto defs = BuildingObjectDefs();
+    return defIndex >= 0 && defIndex < static_cast<int>(defs.size()) ? defs[defIndex] : nullptr;
+}
+
 void DrawPalette(HDC hdc, const RECT& client) {
     RECT panel{0, 0, kPaletteWidth, client.bottom};
     FillRectColor(hdc, panel, RGB(38, 44, 48));
@@ -1550,10 +1575,10 @@ void DrawPalette(HDC hdc, const RECT& client) {
                 showSwatch = true;
             }
         } else {
-            if (i == BuiltTeleportPaletteIndex()) {
-                selected = g_editor.selectedBuiltObject == kTeleportObjectType;
-                label = L"传送点";
-                swatch = RGB(73, 183, 221);
+            if (const rpg::SceneObjectDef* object = BuiltObjectForIndex(i)) {
+                selected = g_editor.selectedBuiltObject == object->type;
+                label = object->displayName;
+                swatch = object->teleport ? RGB(185, 185, 185) : RGB(151, 106, 71);
                 showSwatch = true;
             } else {
                 const rpg::TerrainDef* terrain = BuiltTerrainForIndex(i);
@@ -1824,20 +1849,26 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     g_editor.selectedNatural = terrain->id;
                 }
             } else {
-                if (hit == BuiltTeleportPaletteIndex()) {
-                    g_editor.selectedBuiltObject = std::string(kTeleportObjectType);
-                    g_editor.selectedType = std::string(kTeleportObjectType);
-                    g_editor.status = L"已选择传送点，点击地格放置方形传送点";
+                if (const rpg::SceneObjectDef* object = BuiltObjectForIndex(hit)) {
+                    g_editor.selectedBuiltObject = object->type;
+                    g_editor.selectedType = object->type;
+                    g_editor.status = object->teleport
+                        ? L"已选择传送点，点击地格放置方形传送点"
+                        : L"已选择建筑，点击地格放置";
                 } else if (const rpg::TerrainDef* terrain = BuiltTerrainForIndex(hit)) {
                     g_editor.selectedBuiltObject.clear();
                     g_editor.selectedBuilt = terrain->id;
+                    g_editor.status = L"已选择建筑地板";
                 } else {
                     g_editor.selectedBuiltObject.clear();
                     g_editor.selectedBuilt = "none";
+                    g_editor.status = L"已选择建筑层擦除工具";
                 }
             }
             g_editor.selectedObject = -1;
-            g_editor.status = L"已选择工具";
+            if (g_editor.mode != EditorMode::Built) {
+                g_editor.status = L"已选择工具";
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -1863,23 +1894,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            const bool placingBuiltTeleport =
-                g_editor.mode == EditorMode::Built &&
-                g_editor.selectedBuiltObject == kTeleportObjectType;
-            bool placedBuiltTeleport = false;
+            const rpg::SceneObjectDef* selectedBuilding =
+                g_editor.mode == EditorMode::Built
+                    ? rpg::FindObjectDef(g_editor.selectedBuiltObject)
+                    : nullptr;
+            if (selectedBuilding && !selectedBuilding->building) {
+                selectedBuilding = nullptr;
+            }
             if (g_editor.mode == EditorMode::Built) {
                 const int objectIndex = HitObject(world);
-                if (objectIndex >= 0 && rpg::ObjectIsTeleport(g_editor.scene.objects[objectIndex])) {
+                const rpg::SceneObjectDef* hitDef = objectIndex >= 0
+                    ? rpg::FindObjectDef(g_editor.scene.objects[objectIndex].type)
+                    : nullptr;
+                if (objectIndex >= 0 && hitDef && hitDef->building) {
                     g_editor.selectedObject = objectIndex;
-                    g_editor.dragging = true;
-                    g_editor.dragStartWorld = world;
-                    g_editor.dragStartObject = g_editor.scene.objects[objectIndex].pos;
-                    g_editor.status = L"已选中传送点，可拖动或连接";
-                } else if (placingBuiltTeleport) {
-                    AddObjectAt(TileCenterBottom(world), kTeleportObjectType);
                     g_editor.dragging = false;
-                    placedBuiltTeleport = true;
-                    g_editor.status = L"已放置传送点，请选中后点击“连接传送点”";
+                    g_editor.status = hitDef->teleport
+                        ? L"已选中传送点，可连接或删除"
+                        : L"已选中建筑，可删除";
+                } else if (selectedBuilding) {
+                    AddObjectAt(BuildingAnchor(world, *selectedBuilding), selectedBuilding->type);
+                    g_editor.dragging = false;
+                    g_editor.status = selectedBuilding->teleport
+                        ? L"已放置传送点，请选中后点击“连接传送点”"
+                        : L"已放置建筑";
                 } else {
                     g_editor.paintingTerrain = true;
                     g_editor.lastPaintTileX = -1;
@@ -1890,10 +1928,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 const int objectIndex = HitObject(world);
                 if (objectIndex >= 0) {
                     g_editor.selectedObject = objectIndex;
-                    g_editor.dragging = true;
-                    g_editor.dragStartWorld = world;
-                    g_editor.dragStartObject = g_editor.scene.objects[objectIndex].pos;
-                    g_editor.status = L"拖动对象";
+                    if (!ObjectCanDrag(g_editor.scene.objects[objectIndex])) {
+                        g_editor.dragging = false;
+                        g_editor.status = rpg::ObjectIsTeleport(g_editor.scene.objects[objectIndex])
+                            ? L"已选中传送点，可连接或删除"
+                            : L"已选中固定建筑，可删除";
+                    } else {
+                        g_editor.dragging = true;
+                        g_editor.dragStartWorld = world;
+                        g_editor.dragStartObject = g_editor.scene.objects[objectIndex].pos;
+                        g_editor.status = L"拖动对象";
+                    }
                 } else {
                     AddObjectAt(world);
                 }
@@ -1905,7 +1950,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             } else {
                 return 0;
             }
-            if (!placedBuiltTeleport && (g_editor.dragging || g_editor.paintingTerrain)) {
+            if (g_editor.dragging || g_editor.paintingTerrain) {
                 SetCapture(hwnd);
             }
             InvalidateRect(hwnd, nullptr, FALSE);

@@ -1,8 +1,11 @@
 #include "scene_render.h"
 
+#include <gdiplus.h>
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -18,6 +21,7 @@ constexpr COLORREF kTransparentKey = RGB(255, 0, 255);
 
 struct ObjectBitmap {
     std::string type;
+    std::unique_ptr<Gdiplus::Bitmap> alphaBitmap;
     HBITMAP bitmap = nullptr;
     HDC dc = nullptr;
     HGDIOBJ oldBitmap = nullptr;
@@ -27,6 +31,15 @@ struct ObjectBitmap {
 };
 
 std::vector<ObjectBitmap> g_objectBitmaps;
+ULONG_PTR g_gdiplusToken = 0;
+
+bool EnsureGdiPlus() {
+    if (g_gdiplusToken != 0) {
+        return true;
+    }
+    Gdiplus::GdiplusStartupInput input{};
+    return Gdiplus::GdiplusStartup(&g_gdiplusToken, &input, nullptr) == Gdiplus::Ok;
+}
 
 RECT ToScreenRect(RectF rect, float cameraX, float cameraY, float zoom) {
     return RECT{
@@ -80,13 +93,13 @@ ObjectBitmap& BitmapCacheFor(std::string_view type) {
 
     ObjectBitmap cache;
     cache.type = std::string(type);
-    g_objectBitmaps.push_back(cache);
+    g_objectBitmaps.push_back(std::move(cache));
     return g_objectBitmaps.back();
 }
 
 bool LoadObjectBitmap(HDC hdc, const SceneObjectDef& def, ObjectBitmap& cache) {
     if (cache.attempted) {
-        return cache.bitmap && cache.dc;
+        return cache.alphaBitmap || (cache.bitmap && cache.dc);
     }
     cache.attempted = true;
 
@@ -94,7 +107,22 @@ bool LoadObjectBitmap(HDC hdc, const SceneObjectDef& def, ObjectBitmap& cache) {
         return false;
     }
 
-    const std::wstring path = AssetPath(def.bitmapPath).wstring();
+    const std::filesystem::path imagePath = AssetPath(def.bitmapPath);
+    if (imagePath.extension() == L".png") {
+        if (!EnsureGdiPlus()) {
+            return false;
+        }
+        cache.alphaBitmap = std::make_unique<Gdiplus::Bitmap>(imagePath.c_str());
+        if (!cache.alphaBitmap || cache.alphaBitmap->GetLastStatus() != Gdiplus::Ok) {
+            cache.alphaBitmap.reset();
+            return false;
+        }
+        cache.width = static_cast<int>(cache.alphaBitmap->GetWidth());
+        cache.height = static_cast<int>(cache.alphaBitmap->GetHeight());
+        return cache.width > 0 && cache.height > 0;
+    }
+
+    const std::wstring path = imagePath.wstring();
     cache.bitmap = static_cast<HBITMAP>(LoadImageW(
         nullptr,
         path.c_str(),
@@ -139,6 +167,22 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
         return false;
     }
 
+    if (cache.alphaBitmap) {
+        Gdiplus::Graphics graphics(hdc);
+        graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+        graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
+        graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+        graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+        return graphics.DrawImage(
+                   cache.alphaBitmap.get(),
+                   Gdiplus::Rect(bounds.left, bounds.top, width, height),
+                   0,
+                   0,
+                   cache.width,
+                   cache.height,
+                   Gdiplus::UnitPixel) == Gdiplus::Ok;
+    }
+
     TransparentBlt(
         hdc,
         bounds.left,
@@ -176,6 +220,9 @@ void DrawBush(HDC hdc, int sx, int sy) {
 
 ObjectVisual VisualFor(const SceneObject& object) {
     if (const SceneObjectDef* def = FindObjectDef(object.type)) {
+        if (def->teleport) {
+            return ObjectVisual::TeleportPoint;
+        }
         return def->visual;
     }
     return ObjectVisual::StoneRound;
@@ -195,6 +242,11 @@ void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float ca
         case ObjectVisual::Bush:
             DrawBush(hdc, sx, sy);
             break;
+        case ObjectVisual::TeleportPoint: {
+            const RECT bounds = ToScreenRect(ObjectVisualBounds(object), cameraX, cameraY, zoom);
+            FillRectColor(hdc, bounds, RGB(185, 185, 185));
+            break;
+        }
         case ObjectVisual::StoneRound:
         default:
             DrawStone(hdc, sx, sy);
@@ -240,6 +292,7 @@ void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX,
 
 void ReleaseSceneRenderResources() {
     for (ObjectBitmap& cache : g_objectBitmaps) {
+        cache.alphaBitmap.reset();
         if (cache.dc) {
             if (cache.oldBitmap) {
                 SelectObject(cache.dc, cache.oldBitmap);
@@ -254,6 +307,10 @@ void ReleaseSceneRenderResources() {
         cache.oldBitmap = nullptr;
     }
     g_objectBitmaps.clear();
+    if (g_gdiplusToken != 0) {
+        Gdiplus::GdiplusShutdown(g_gdiplusToken);
+        g_gdiplusToken = 0;
+    }
 }
 
 } // namespace rpg

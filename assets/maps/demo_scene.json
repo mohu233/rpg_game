@@ -78,20 +78,6 @@
       "y": 369.0
     },
     {
-      "id": "obj_3",
-      "group": "obj_3",
-      "type": "exotic_tree_01_shadow",
-      "x": 423.0,
-      "y": 589.0
-    },
-    {
-      "id": "obj_3_tree",
-      "group": "obj_3",
-      "type": "exotic_tree_01",
-      "x": 423.0,
-      "y": 589.0
-    },
-    {
       "id": "obj_4",
       "group": "obj_4",
       "type": "exotic_tree_01_shadow",
@@ -156,6 +142,12 @@
       "y": 432.0,
       "target_scene": "maps/village_square.json",
       "target_id": "obj_15"
+    },
+    {
+      "id": "obj_15",
+      "type": "cottage_4x3",
+      "x": 288.0,
+      "y": 480.0
     }
   ]
 }

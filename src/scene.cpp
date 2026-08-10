@@ -413,8 +413,8 @@ bool LoadObjectDef(
         error = "image file does not exist: " + imagePath.u8string();
         return false;
     }
-    if (imagePath.extension() != L".bmp") {
-        error = "runtime images must use the .bmp format";
+    if (imagePath.extension() != L".bmp" && imagePath.extension() != L".png") {
+        error = "runtime images must use the .bmp or .png format";
         return false;
     }
 
@@ -427,6 +427,16 @@ bool LoadObjectDef(
     def.placeable = FindBoolField(text, "placeable").value_or(true);
     def.companionType = FindStringField(text, "companion_type").value_or("");
     def.teleport = FindBoolField(text, "teleport").value_or(false);
+    def.building = FindBoolField(text, "building").value_or(false);
+    def.footprintWidth = std::clamp(
+        static_cast<int>(std::lround(FindFloatField(text, "footprint_width").value_or(1.0f))),
+        1,
+        256);
+    def.footprintHeight = std::clamp(
+        static_cast<int>(std::lround(FindFloatField(text, "footprint_height").value_or(1.0f))),
+        1,
+        256);
+    def.draggable = FindBoolField(text, "draggable").value_or(true);
     if (!def.companionType.empty() && !IsValidObjectType(def.companionType)) {
         error = "companion_type must contain only letters, numbers, '-' or '_'";
         return false;

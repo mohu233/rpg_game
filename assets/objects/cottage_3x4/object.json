@@ -1,0 +1,21 @@
+{
+  "type": "cottage_4x3",
+  "display_name": "蜜雪冰城小屋 4x3",
+  "image": "cottage_4x3.png",
+  "width": 192.0,
+  "height": 283.0,
+  "z_offset": 0.0,
+  "building": true,
+  "footprint_width": 4,
+  "footprint_height": 3,
+  "draggable": false,
+  "collision": {
+    "shape": "rect",
+    "x": -96.0,
+    "y": -144.0,
+    "w": 192.0,
+    "h": 144.0,
+    "radius": 0.0,
+    "blocks": true
+  }
+}
