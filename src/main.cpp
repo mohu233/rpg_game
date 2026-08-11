@@ -28,6 +28,9 @@ constexpr float kWorldScale = 3.0f;
 constexpr int kSpriteFrameSize = 288;
 constexpr int kSpriteDrawSize = 96;
 constexpr int kSideWalkFrames = 8;
+constexpr int kAttackFrames = 5;
+constexpr float kAttackFramesPerSecond = 16.0f;
+constexpr float kAttackDuration = kAttackFrames / kAttackFramesPerSecond;
 constexpr float kDefaultZoom = 1.0f / kWorldScale;
 constexpr float kMinimumZoom = kDefaultZoom;
 constexpr float kMaximumZoom = 1.0f;
@@ -54,6 +57,8 @@ struct Player {
     Vec2 vel{};
     int dir = 0;
     float animTime = 0.0f;
+    bool attacking = false;
+    float attackTime = 0.0f;
 };
 
 struct SpriteSheet {
@@ -124,6 +129,7 @@ std::filesystem::path g_requestedScenePath;
 SpriteSheet g_playerSprite;
 SpriteSheet g_playerRunFront;
 SpriteSheet g_playerRunBack;
+SpriteSheet g_playerAttackFront;
 std::array<SpriteSheet, 3> g_playerIdleSprites;
 
 struct ItemBitmapCache {
@@ -296,6 +302,7 @@ void LoadPlayerSprites() {
     LoadSpriteSheet(g_playerSprite, AssetPath(L"player_walk_side_8.png"));
     LoadSpriteSheet(g_playerRunFront, AssetPath(L"player_walk_front.png"));
     LoadSpriteSheet(g_playerRunBack, AssetPath(L"player_walk_back.png"));
+    LoadSpriteSheet(g_playerAttackFront, AssetPath(L"player_attack_front.png"));
     LoadSpriteSheet(g_playerIdleSprites[0], AssetPath(L"player_idle_front.png"));
     LoadSpriteSheet(g_playerIdleSprites[1], AssetPath(L"player_idle_side.png"));
     LoadSpriteSheet(g_playerIdleSprites[2], AssetPath(L"player_idle_back.png"));
@@ -467,6 +474,8 @@ bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view target
     g_game.scene = std::move(nextScene);
     g_game.player.pos = {destination.x, destination.y};
     g_game.player.animTime = 0.0f;
+    g_game.player.attacking = false;
+    g_game.player.attackTime = 0.0f;
     g_game.teleportCooldown = 0.8f;
     ActivateScenePickups(path);
     return true;
@@ -510,6 +519,13 @@ void UpdateNearbyNpc() {
 void UpdateGame(float dt) {
     g_game.teleportCooldown = std::max(0.0f, g_game.teleportCooldown - dt);
     g_game.pickupNoticeTime = std::max(0.0f, g_game.pickupNoticeTime - dt);
+    if (g_game.player.attacking) {
+        g_game.player.attackTime += dt;
+        if (g_game.player.attackTime >= kAttackDuration) {
+            g_game.player.attacking = false;
+            g_game.player.attackTime = 0.0f;
+        }
+    }
     if (g_game.inventory.open) {
         g_game.player.vel = {};
         g_game.player.animTime = 0.0f;
@@ -613,7 +629,18 @@ void DrawPlayer(HDC hdc) {
     const int idleIndex = g_game.player.dir == 0 ? 0 : (g_game.player.dir == 3 ? 2 : 1);
     const SpriteSheet* sprite = moving ? &g_playerSprite : &g_playerIdleSprites[idleIndex];
     int frameCount = kSideWalkFrames;
-    if (moving && g_game.player.dir == 0 && g_playerRunFront.bitmap) {
+    int frame = 0;
+    int sx = 0;
+    int sy = 0;
+    bool mirror = false;
+    if (g_game.player.attacking && g_playerAttackFront.bitmap) {
+        sprite = &g_playerAttackFront;
+        frameCount = kAttackFrames;
+        frame = std::min(
+            kAttackFrames - 1,
+            static_cast<int>(g_game.player.attackTime * kAttackFramesPerSecond));
+        sx = frame * kSpriteFrameSize;
+    } else if (moving && g_game.player.dir == 0 && g_playerRunFront.bitmap) {
         sprite = &g_playerRunFront;
         frameCount = 4;
     } else if (moving && g_game.player.dir == 3 && g_playerRunBack.bitmap) {
@@ -631,14 +658,14 @@ void DrawPlayer(HDC hdc) {
         ? 5.0f
         : 10.0f;
 
-    const int frame = moving
-        ? (static_cast<int>(g_game.player.animTime * animationSpeed) % frameCount)
-        : 0;
-
-    const bool mirror = moving ? g_game.player.dir == 1 : g_game.player.dir == 2;
-
-    const int sx = (frame % 4) * kSpriteFrameSize;
-    const int sy = (frame / 4) * kSpriteFrameSize;
+    if (!g_game.player.attacking || sprite != &g_playerAttackFront) {
+        frame = moving
+            ? (static_cast<int>(g_game.player.animTime * animationSpeed) % frameCount)
+            : 0;
+        mirror = moving ? g_game.player.dir == 1 : g_game.player.dir == 2;
+        sx = (frame % 4) * kSpriteFrameSize;
+        sy = (frame / 4) * kSpriteFrameSize;
+    }
 
     const float renderScale = RenderScale();
     const int spriteDrawSize = std::max(1, static_cast<int>(std::round(kSpriteDrawSize * renderScale)));
@@ -1165,6 +1192,19 @@ void ToggleInventory() {
     g_game.right = false;
     g_game.interact = false;
     g_game.showTalk = false;
+    if (g_game.inventory.open) {
+        g_game.player.attacking = false;
+        g_game.player.attackTime = 0.0f;
+    }
+}
+
+void StartAttack() {
+    if (g_game.inventory.open || g_game.player.attacking) {
+        return;
+    }
+    g_game.player.attacking = true;
+    g_game.player.attackTime = 0.0f;
+    g_game.player.dir = 0;
 }
 
 void SetKey(WPARAM key, bool pressed) {
@@ -1255,6 +1295,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
+        if (wParam == VK_SPACE) {
+            if ((lParam & (1LL << 30)) == 0) {
+                StartAttack();
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         SetKey(wParam, true);
         return 0;
     case WM_KEYUP:
@@ -1292,7 +1339,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_game.pickupNotice = pickup.item.displayName;
             g_game.pickupNoticeTime = 1.5f;
             InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
         }
+        StartAttack();
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
     case WM_MOUSEMOVE:
@@ -1347,7 +1397,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             sprite.bitmap.reset();
             sprite.loaded = false;
         }
-        for (SpriteSheet* sprite : {&g_playerSprite, &g_playerRunFront, &g_playerRunBack}) {
+        for (SpriteSheet* sprite : {&g_playerSprite, &g_playerRunFront, &g_playerRunBack, &g_playerAttackFront}) {
             sprite->bitmap.reset();
             sprite->loaded = false;
         }
