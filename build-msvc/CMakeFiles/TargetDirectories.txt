@@ -1,6 +1,7 @@
 E:/rpg_game/build-msvc/CMakeFiles/FreeWalkRpgDemo.dir
 E:/rpg_game/build-msvc/CMakeFiles/SceneEditor.dir
 E:/rpg_game/build-msvc/CMakeFiles/SceneDataTests.dir
+E:/rpg_game/build-msvc/CMakeFiles/ItemDataTests.dir
 E:/rpg_game/build-msvc/CMakeFiles/test.dir
 E:/rpg_game/build-msvc/CMakeFiles/edit_cache.dir
 E:/rpg_game/build-msvc/CMakeFiles/rebuild_cache.dir

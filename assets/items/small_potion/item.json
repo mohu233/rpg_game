@@ -1,0 +1,13 @@
+{
+  "id": "small_potion",
+  "display_name": "小型生命药水",
+  "max_stack": 20,
+  "color": "#d65f69",
+  "icon": "items/small_potion/icon.png",
+  "world_image": "items/small_potion/world.png",
+  "properties": {
+    "heal": 25,
+    "value": 12,
+    "weight": 0.2
+  }
+}

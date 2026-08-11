@@ -1,0 +1,13 @@
+{
+  "id": "wood",
+  "display_name": "木材",
+  "max_stack": 99,
+  "color": "#a9794f",
+  "icon": "items/wood/icon.png",
+  "world_image": "items/wood/world.png",
+  "properties": {
+    "material_grade": 1,
+    "value": 2,
+    "weight": 1.0
+  }
+}

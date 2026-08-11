@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(RPG_SHARED_SOURCES
+    src/item.cpp
     src/scene.cpp
     src/scene_render.cpp
     src/terrain_render.cpp
@@ -86,3 +87,23 @@ target_compile_definitions(SceneDataTests PRIVATE
 )
 
 add_test(NAME SceneDataRoundTrip COMMAND SceneDataTests)
+
+add_executable(ItemDataTests
+    tests/item_data_tests.cpp
+    src/item.cpp
+)
+
+target_include_directories(ItemDataTests PRIVATE src)
+target_compile_definitions(ItemDataTests PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    RPG_ASSET_DIR=L"${RPG_ASSET_DIR}"
+)
+
+target_compile_options(ItemDataTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    $<$<CXX_COMPILER_ID:GNU>:-finput-charset=UTF-8>
+)
+
+add_test(NAME ItemDefinitions COMMAND ItemDataTests)

@@ -1,0 +1,13 @@
+{
+  "id": "healing_herb",
+  "display_name": "治疗药草",
+  "max_stack": 50,
+  "color": "#65ad68",
+  "icon": "items/healing_herb/icon.png",
+  "world_image": "items/healing_herb/world.png",
+  "properties": {
+    "heal": 8,
+    "value": 3,
+    "weight": 0.1
+  }
+}

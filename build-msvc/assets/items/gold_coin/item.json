@@ -1,0 +1,13 @@
+{
+  "id": "gold_coin",
+  "display_name": "金币",
+  "max_stack": 999,
+  "color": "#e0b83f",
+  "icon": "items/gold_coin/icon.png",
+  "world_image": "items/gold_coin/world.png",
+  "properties": {
+    "currency": 1,
+    "value": 1,
+    "weight": 0.01
+  }
+}

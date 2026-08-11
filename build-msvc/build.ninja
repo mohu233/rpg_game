@@ -59,6 +59,16 @@ build CMakeFiles\FreeWalkRpgDemo.dir\src\main.cpp.obj: CXX_COMPILER__FreeWalkRpg
   TARGET_PDB = FreeWalkRpgDemo.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\FreeWalkRpgDemo.dir
 
+build CMakeFiles\FreeWalkRpgDemo.dir\src\item.cpp.obj: CXX_COMPILER__FreeWalkRpgDemo_unscanned_Debug E$:\rpg_game\src\item.cpp || cmake_object_order_depends_target_FreeWalkRpgDemo
+  CONFIG = Debug
+  DEFINES = -DNOMINMAX -DRPG_ASSET_DIR=L\"E:/rpg_game/assets\" -DUNICODE -D_UNICODE
+  FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd /utf-8
+  OBJECT_DIR = CMakeFiles\FreeWalkRpgDemo.dir
+  OBJECT_FILE_DIR = CMakeFiles\FreeWalkRpgDemo.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\FreeWalkRpgDemo.dir\
+  TARGET_PDB = FreeWalkRpgDemo.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\FreeWalkRpgDemo.dir
+
 build CMakeFiles\FreeWalkRpgDemo.dir\src\scene.cpp.obj: CXX_COMPILER__FreeWalkRpgDemo_unscanned_Debug E$:\rpg_game\src\scene.cpp || cmake_object_order_depends_target_FreeWalkRpgDemo
   CONFIG = Debug
   DEFINES = -DNOMINMAX -DRPG_ASSET_DIR=L\"E:/rpg_game/assets\" -DUNICODE -D_UNICODE
@@ -97,7 +107,7 @@ build CMakeFiles\FreeWalkRpgDemo.dir\src\terrain_render.cpp.obj: CXX_COMPILER__F
 #############################################
 # Link the executable FreeWalkRpgDemo.exe
 
-build FreeWalkRpgDemo.exe: CXX_EXECUTABLE_LINKER__FreeWalkRpgDemo_Debug CMakeFiles\FreeWalkRpgDemo.dir\src\main.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\scene.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\scene_render.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\terrain_render.cpp.obj
+build FreeWalkRpgDemo.exe: CXX_EXECUTABLE_LINKER__FreeWalkRpgDemo_Debug CMakeFiles\FreeWalkRpgDemo.dir\src\main.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\item.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\scene.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\scene_render.cpp.obj CMakeFiles\FreeWalkRpgDemo.dir\src\terrain_render.cpp.obj
   CONFIG = Debug
   FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -MDd
   LINK_FLAGS = /machine:x64 /debug /INCREMENTAL /subsystem:windows
@@ -121,6 +131,16 @@ build FreeWalkRpgDemo.exe: CXX_EXECUTABLE_LINKER__FreeWalkRpgDemo_Debug CMakeFil
 build cmake_object_order_depends_target_SceneEditor: phony || .
 
 build CMakeFiles\SceneEditor.dir\src\editor.cpp.obj: CXX_COMPILER__SceneEditor_unscanned_Debug E$:\rpg_game\src\editor.cpp || cmake_object_order_depends_target_SceneEditor
+  CONFIG = Debug
+  DEFINES = -DNOMINMAX -DRPG_ASSET_DIR=L\"E:/rpg_game/assets\" -DUNICODE -D_UNICODE
+  FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd /utf-8
+  OBJECT_DIR = CMakeFiles\SceneEditor.dir
+  OBJECT_FILE_DIR = CMakeFiles\SceneEditor.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\SceneEditor.dir\
+  TARGET_PDB = SceneEditor.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\SceneEditor.dir
+
+build CMakeFiles\SceneEditor.dir\src\item.cpp.obj: CXX_COMPILER__SceneEditor_unscanned_Debug E$:\rpg_game\src\item.cpp || cmake_object_order_depends_target_SceneEditor
   CONFIG = Debug
   DEFINES = -DNOMINMAX -DRPG_ASSET_DIR=L\"E:/rpg_game/assets\" -DUNICODE -D_UNICODE
   FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd /utf-8
@@ -168,7 +188,7 @@ build CMakeFiles\SceneEditor.dir\src\terrain_render.cpp.obj: CXX_COMPILER__Scene
 #############################################
 # Link the executable SceneEditor.exe
 
-build SceneEditor.exe: CXX_EXECUTABLE_LINKER__SceneEditor_Debug CMakeFiles\SceneEditor.dir\src\editor.cpp.obj CMakeFiles\SceneEditor.dir\src\scene.cpp.obj CMakeFiles\SceneEditor.dir\src\scene_render.cpp.obj CMakeFiles\SceneEditor.dir\src\terrain_render.cpp.obj
+build SceneEditor.exe: CXX_EXECUTABLE_LINKER__SceneEditor_Debug CMakeFiles\SceneEditor.dir\src\editor.cpp.obj CMakeFiles\SceneEditor.dir\src\item.cpp.obj CMakeFiles\SceneEditor.dir\src\scene.cpp.obj CMakeFiles\SceneEditor.dir\src\scene_render.cpp.obj CMakeFiles\SceneEditor.dir\src\terrain_render.cpp.obj
   CONFIG = Debug
   FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -MDd
   LINK_FLAGS = /machine:x64 /debug /INCREMENTAL /subsystem:windows
@@ -233,6 +253,59 @@ build SceneDataTests.exe: CXX_EXECUTABLE_LINKER__SceneDataTests_Debug CMakeFiles
   TARGET_PDB = SceneDataTests.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\SceneDataTests.dir
 
+# =============================================================================
+# Object build statements for EXECUTABLE target ItemDataTests
+
+
+#############################################
+# Order-only phony target for ItemDataTests
+
+build cmake_object_order_depends_target_ItemDataTests: phony || .
+
+build CMakeFiles\ItemDataTests.dir\tests\item_data_tests.cpp.obj: CXX_COMPILER__ItemDataTests_unscanned_Debug E$:\rpg_game\tests\item_data_tests.cpp || cmake_object_order_depends_target_ItemDataTests
+  CONFIG = Debug
+  DEFINES = -DNOMINMAX -DRPG_ASSET_DIR=L\"E:/rpg_game/assets\" -DUNICODE -D_UNICODE
+  FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd /utf-8
+  INCLUDES = -IE:\rpg_game\src
+  OBJECT_DIR = CMakeFiles\ItemDataTests.dir
+  OBJECT_FILE_DIR = CMakeFiles\ItemDataTests.dir\tests
+  TARGET_COMPILE_PDB = CMakeFiles\ItemDataTests.dir\
+  TARGET_PDB = ItemDataTests.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\ItemDataTests.dir
+
+build CMakeFiles\ItemDataTests.dir\src\item.cpp.obj: CXX_COMPILER__ItemDataTests_unscanned_Debug E$:\rpg_game\src\item.cpp || cmake_object_order_depends_target_ItemDataTests
+  CONFIG = Debug
+  DEFINES = -DNOMINMAX -DRPG_ASSET_DIR=L\"E:/rpg_game/assets\" -DUNICODE -D_UNICODE
+  FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd /utf-8
+  INCLUDES = -IE:\rpg_game\src
+  OBJECT_DIR = CMakeFiles\ItemDataTests.dir
+  OBJECT_FILE_DIR = CMakeFiles\ItemDataTests.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\ItemDataTests.dir\
+  TARGET_PDB = ItemDataTests.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\ItemDataTests.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target ItemDataTests
+
+
+#############################################
+# Link the executable ItemDataTests.exe
+
+build ItemDataTests.exe: CXX_EXECUTABLE_LINKER__ItemDataTests_Debug CMakeFiles\ItemDataTests.dir\tests\item_data_tests.cpp.obj CMakeFiles\ItemDataTests.dir\src\item.cpp.obj
+  CONFIG = Debug
+  FLAGS = /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -MDd
+  LINK_FLAGS = /machine:x64 /debug /INCREMENTAL /subsystem:console
+  LINK_LIBRARIES = kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib
+  OBJECT_DIR = CMakeFiles\ItemDataTests.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_COMPILE_PDB = CMakeFiles\ItemDataTests.dir\
+  TARGET_FILE = ItemDataTests.exe
+  TARGET_IMPLIB = ItemDataTests.lib
+  TARGET_PDB = ItemDataTests.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\ItemDataTests.dir
+
 
 #############################################
 # Utility command for test
@@ -273,6 +346,8 @@ build rebuild_cache: phony CMakeFiles\rebuild_cache.util
 
 build FreeWalkRpgDemo: phony FreeWalkRpgDemo.exe
 
+build ItemDataTests: phony ItemDataTests.exe
+
 build SceneDataTests: phony SceneDataTests.exe
 
 build SceneEditor: phony SceneEditor.exe
@@ -285,7 +360,7 @@ build SceneEditor: phony SceneEditor.exe
 #############################################
 # Folder: E:/rpg_game/build-msvc
 
-build all: phony FreeWalkRpgDemo.exe SceneEditor.exe SceneDataTests.exe
+build all: phony FreeWalkRpgDemo.exe SceneEditor.exe SceneDataTests.exe ItemDataTests.exe
 
 # =============================================================================
 # Built-in targets
