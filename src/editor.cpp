@@ -117,6 +117,7 @@ struct EditorState {
     float cameraY = 0.0f;
     float zoom = 1.0f;
     bool panning = false;
+    bool panningWithMiddleButton = false;
     POINT panStartScreen{};
     float panStartCameraX = 0.0f;
     float panStartCameraY = 0.0f;
@@ -129,6 +130,11 @@ struct EditorState {
     int paletteScroll = 0;
     rpg::Vec2 dragStartWorld{};
     rpg::Vec2 dragStartObject{};
+    bool selectingNaturalArea = false;
+    int selectionStartTileX = 0;
+    int selectionStartTileY = 0;
+    int selectionEndTileX = 0;
+    int selectionEndTileY = 0;
     std::wstring status = L"就绪";
 };
 
@@ -1501,6 +1507,38 @@ void PaintTerrainAt(rpg::Vec2 point) {
     g_editor.lastPaintTileY = targetY;
 }
 
+void UpdateNaturalSelection(int screenX, int screenY) {
+    const rpg::Vec2 world = ScreenToWorld(screenX, screenY);
+    g_editor.selectionEndTileX = std::clamp(
+        static_cast<int>(std::floor(world.x / kTileSize)),
+        0,
+        std::max(0, g_editor.scene.mapWidth - 1));
+    g_editor.selectionEndTileY = std::clamp(
+        static_cast<int>(std::floor(world.y / kTileSize)),
+        0,
+        std::max(0, g_editor.scene.mapHeight - 1));
+}
+
+void ApplyNaturalSelection() {
+    const int left = std::min(g_editor.selectionStartTileX, g_editor.selectionEndTileX);
+    const int right = std::max(g_editor.selectionStartTileX, g_editor.selectionEndTileX);
+    const int top = std::min(g_editor.selectionStartTileY, g_editor.selectionEndTileY);
+    const int bottom = std::max(g_editor.selectionStartTileY, g_editor.selectionEndTileY);
+    bool changed = false;
+    for (int y = top; y <= bottom; ++y) {
+        for (int x = left; x <= right; ++x) {
+            changed = rpg::SetNaturalTerrain(g_editor.scene, x, y, g_editor.selectedNatural) || changed;
+        }
+    }
+    if (changed) {
+        const int width = right - left + 1;
+        const int height = bottom - top + 1;
+        MarkDirty(
+            (g_editor.selectedNatural == "none" ? L"已批量擦除自然地皮 " : L"已批量铺设自然地皮 ") +
+            std::to_wstring(width) + L"x" + std::to_wstring(height));
+    }
+}
+
 rpg::TerrainDef const* NaturalTerrainForIndex(int index) {
     const auto& defs = rpg::NaturalTerrainDefs();
     if (index <= 0) {
@@ -1669,6 +1707,31 @@ void DrawSceneObjects(HDC hdc) {
     }
 }
 
+void DrawNaturalSelection(HDC hdc) {
+    if (!g_editor.selectingNaturalArea) {
+        return;
+    }
+    const int leftTile = std::min(g_editor.selectionStartTileX, g_editor.selectionEndTileX);
+    const int rightTile = std::max(g_editor.selectionStartTileX, g_editor.selectionEndTileX) + 1;
+    const int topTile = std::min(g_editor.selectionStartTileY, g_editor.selectionEndTileY);
+    const int bottomTile = std::max(g_editor.selectionStartTileY, g_editor.selectionEndTileY) + 1;
+    RECT selection{
+        static_cast<LONG>(std::round(kPaletteWidth + leftTile * kTileSize * g_editor.zoom - g_editor.cameraX)),
+        static_cast<LONG>(std::round(topTile * kTileSize * g_editor.zoom - g_editor.cameraY)),
+        static_cast<LONG>(std::round(kPaletteWidth + rightTile * kTileSize * g_editor.zoom - g_editor.cameraX)),
+        static_cast<LONG>(std::round(bottomTile * kTileSize * g_editor.zoom - g_editor.cameraY)),
+    };
+    HBRUSH brush = CreateHatchBrush(HS_DIAGCROSS, RGB(105, 180, 210));
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(240, 224, 112));
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    Rectangle(hdc, selection.left, selection.top, selection.right, selection.bottom);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
 void RenderEditor(HWND hwnd, HDC target) {
     RECT client{};
     GetClientRect(hwnd, &client);
@@ -1684,6 +1747,7 @@ void RenderEditor(HWND hwnd, HDC target) {
     DrawBackgroundImage(hdc);
     DrawMap(hdc);
     DrawSceneObjects(hdc);
+    DrawNaturalSelection(hdc);
     RestoreDC(hdc, -1);
 
     DrawPalette(hdc, client);
@@ -1808,6 +1872,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (const int tab = PaletteTabHitTest(x, y); tab >= 0) {
             g_editor.mode = static_cast<EditorMode>(tab);
             g_editor.selectedObject = -1;
+            g_editor.selectingNaturalArea = false;
             g_editor.paletteScroll = 0;
             g_editor.status = tab == 0 ? L"地图列表" :
                 (tab == 1 ? L"对象工具" : (tab == 2 ? L"自然地皮" : L"建筑地板"));
@@ -1876,6 +1941,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (x >= kPaletteWidth) {
             if (GetKeyState(VK_SPACE) & 0x8000) {
                 g_editor.panning = true;
+                g_editor.panningWithMiddleButton = false;
                 g_editor.panStartScreen = POINT{x, y};
                 g_editor.panStartCameraX = g_editor.cameraX;
                 g_editor.panStartCameraY = g_editor.cameraY;
@@ -1975,10 +2041,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_MOUSEMOVE:
-        if (g_editor.panning && (wParam & MK_LBUTTON)) {
+        if (g_editor.panning &&
+            ((g_editor.panningWithMiddleButton && (wParam & MK_MBUTTON)) ||
+             (!g_editor.panningWithMiddleButton && (wParam & MK_LBUTTON)))) {
             g_editor.cameraX = g_editor.panStartCameraX - static_cast<float>(GET_X_LPARAM(lParam) - g_editor.panStartScreen.x);
             g_editor.cameraY = g_editor.panStartCameraY - static_cast<float>(GET_Y_LPARAM(lParam) - g_editor.panStartScreen.y);
             ClampCamera(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        } else if (g_editor.selectingNaturalArea && (wParam & MK_RBUTTON)) {
+            UpdateNaturalSelection(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (g_editor.paintingTerrain && (wParam & MK_LBUTTON)) {
             PaintTerrainAt(ScreenToWorld(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
@@ -1989,19 +2060,64 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     case WM_MBUTTONDOWN:
+        if (GET_X_LPARAM(lParam) < kPaletteWidth) {
+            return 0;
+        }
+        SetFocus(hwnd);
         g_editor.panning = true;
+        g_editor.panningWithMiddleButton = true;
         g_editor.panStartScreen = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         g_editor.panStartCameraX = g_editor.cameraX;
         g_editor.panStartCameraY = g_editor.cameraY;
         SetCapture(hwnd);
         return 0;
     case WM_MBUTTONUP:
-        g_editor.panning = false;
-        ReleaseCapture();
+        if (g_editor.panning && g_editor.panningWithMiddleButton) {
+            g_editor.panning = false;
+            g_editor.panningWithMiddleButton = false;
+            ReleaseCapture();
+        }
+        return 0;
+    case WM_RBUTTONDOWN: {
+        const int x = GET_X_LPARAM(lParam);
+        const int y = GET_Y_LPARAM(lParam);
+        if (x < kPaletteWidth || g_editor.mode != EditorMode::Natural ||
+            g_editor.scene.mapWidth <= 0 || g_editor.scene.mapHeight <= 0) {
+            return 0;
+        }
+        SetFocus(hwnd);
+        const rpg::Vec2 world = ScreenToWorld(x, y);
+        g_editor.selectionStartTileX = std::clamp(
+            static_cast<int>(std::floor(world.x / kTileSize)), 0, g_editor.scene.mapWidth - 1);
+        g_editor.selectionStartTileY = std::clamp(
+            static_cast<int>(std::floor(world.y / kTileSize)), 0, g_editor.scene.mapHeight - 1);
+        g_editor.selectionEndTileX = g_editor.selectionStartTileX;
+        g_editor.selectionEndTileY = g_editor.selectionStartTileY;
+        g_editor.selectingNaturalArea = true;
+        g_editor.status = g_editor.selectedNatural == "none"
+            ? L"右键框选批量擦除区域"
+            : L"右键框选批量铺设区域";
+        SetCapture(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_RBUTTONUP:
+        if (g_editor.selectingNaturalArea) {
+            UpdateNaturalSelection(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            ApplyNaturalSelection();
+            g_editor.selectingNaturalArea = false;
+            ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_CONTEXTMENU:
         return 0;
     case WM_LBUTTONUP:
-        if (g_editor.panning || g_editor.dragging || g_editor.paintingTerrain) {
-            g_editor.panning = false;
+        if ((g_editor.panning && !g_editor.panningWithMiddleButton) ||
+            g_editor.dragging || g_editor.paintingTerrain) {
+            if (!g_editor.panningWithMiddleButton) {
+                g_editor.panning = false;
+            }
             g_editor.dragging = false;
             g_editor.paintingTerrain = false;
             g_editor.lastPaintTileX = -1;
@@ -2009,6 +2125,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             ReleaseCapture();
             InvalidateRect(hwnd, nullptr, FALSE);
         }
+        return 0;
+    case WM_CAPTURECHANGED:
+        g_editor.panning = false;
+        g_editor.panningWithMiddleButton = false;
+        g_editor.dragging = false;
+        g_editor.paintingTerrain = false;
+        g_editor.selectingNaturalArea = false;
+        g_editor.lastPaintTileX = -1;
+        g_editor.lastPaintTileY = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_KEYDOWN:
         HandleKey(hwnd, wParam);

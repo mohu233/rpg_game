@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild player sprite sheets without per-frame cropping or repositioning."""
+"""Rebuild every player sprite sheet from the PSD export folders."""
 
 from __future__ import annotations
 
@@ -11,12 +11,16 @@ from pathlib import Path
 from PIL import Image
 
 
-FRAME_SIZE = 288
+SOURCE_CHARACTER_HEIGHT = 380
+TARGET_CHARACTER_HEIGHT = 288
+FRAME_SIZE = round(500 * TARGET_CHARACTER_HEIGHT / SOURCE_CHARACTER_HEIGHT)
 EXPECTED_COUNTS = {
     "front": 4,
     "side": 8,
     "back": 4,
     "attack_front": 5,
+    "attack_side": 4,
+    "attack_back": 5,
 }
 
 
@@ -50,6 +54,8 @@ def source_groups(source_root: Path) -> dict[str, list[Path]]:
         "side": numeric_frames(source_root / "\u4fa7\u8138\u8dd1\u6b65", EXPECTED_COUNTS["side"]),
         "back": numeric_frames(source_root / "\u80cc\u9762\u8dd1\u6b65", EXPECTED_COUNTS["back"]),
         "attack_front": numeric_frames(source_root / "\u6b63\u9762\u653b\u51fb", EXPECTED_COUNTS["attack_front"]),
+        "attack_side": numeric_frames(source_root / "\u4fa7\u9762\u653b\u51fb", EXPECTED_COUNTS["attack_side"]),
+        "attack_back": numeric_frames(source_root / "\u80cc\u9762\u653b\u51fb", EXPECTED_COUNTS["attack_back"]),
     }
 
 
@@ -105,6 +111,8 @@ def build_outputs(groups: dict[str, list[Path]], source_size: tuple[int, int]) -
         "player_walk_side_8.png": build_sheet(groups["side"], 4, source_size),
         "player_walk_back.png": build_sheet(groups["back"], 4, source_size),
         "player_attack_front.png": build_sheet(groups["attack_front"], 5, source_size),
+        "player_attack_side.png": build_sheet(groups["attack_side"], 4, source_size),
+        "player_attack_back.png": build_sheet(groups["attack_back"], 5, source_size),
     }
 
 
@@ -152,6 +160,7 @@ def main() -> None:
 
     scale = FRAME_SIZE / source_size[0]
     print(f"source canvas: {source_size[0]}x{source_size[1]}")
+    print(f"character height basis: {SOURCE_CHARACTER_HEIGHT}px -> {TARGET_CHARACTER_HEIGHT}px")
     print(f"uniform canvas scale: {scale:.6f}")
 
 
