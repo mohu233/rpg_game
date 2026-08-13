@@ -1,0 +1,6 @@
+# ninja log v6
+39	4793	8083043814561334	CMakeFiles/SceneDataTests.dir/src/world_layers.cpp.obj	216b41437f23f8b3
+13	4813	8083043814311347	CMakeFiles/SceneDataTests.dir/tests/scene_data_tests.cpp.obj	adb11baf03f39324
+22	5015	8083043814391344	CMakeFiles/SceneDataTests.dir/src/save_game.cpp.obj	155d9a0a0d37d622
+31	5535	8083043814481341	CMakeFiles/SceneDataTests.dir/src/scene.cpp.obj	caf52d009edddb3d
+5537	6771	8083043869530900	SceneDataTests.exe	ef64bff38435c4fb

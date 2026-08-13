@@ -750,6 +750,7 @@ const SceneObjectDef* FindObjectDef(std::string_view type) {
 Scene::Scene() {
     naturalTerrain.assign(mapWidth * mapHeight, "grass");
     builtTerrain.assign(mapWidth * mapHeight, "none");
+    territory.assign(mapWidth * mapHeight, 0);
 }
 
 std::string_view NaturalTerrainAt(const Scene& scene, int tx, int ty) {
@@ -790,6 +791,24 @@ bool SetBuiltTerrain(Scene& scene, int tx, int ty, std::string_view terrainId) {
     return true;
 }
 
+bool TerritoryAt(const Scene& scene, int tx, int ty) {
+    if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) return false;
+    const size_t index = static_cast<size_t>(ty) * scene.mapWidth + tx;
+    return index < scene.territory.size() && scene.territory[index] != 0;
+}
+
+bool SetTerritory(Scene& scene, int tx, int ty, bool claimed) {
+    if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) return false;
+    if (scene.territory.size() != static_cast<size_t>(scene.mapWidth) * scene.mapHeight) {
+        scene.territory.assign(static_cast<size_t>(scene.mapWidth) * scene.mapHeight, 0);
+    }
+    std::uint8_t& cell = scene.territory[static_cast<size_t>(ty) * scene.mapWidth + tx];
+    const std::uint8_t value = claimed ? 1 : 0;
+    if (cell == value) return false;
+    cell = value;
+    return true;
+}
+
 SceneObject MakeObject(std::string_view type, Vec2 pos, int index) {
     const SceneObjectDef* def = FindObjectDef(type);
     SceneObject object;
@@ -821,10 +840,17 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
     }
 
     Scene loaded;
-    loaded.mapWidth = std::clamp(static_cast<int>(std::lround(FindFloatField(text, "width").value_or(kMapWidth))), 1, 256);
-    loaded.mapHeight = std::clamp(static_cast<int>(std::lround(FindFloatField(text, "height").value_or(kMapHeight))), 1, 256);
+    loaded.mapWidth = std::clamp(
+        static_cast<int>(std::lround(FindFloatField(text, "width").value_or(kMapWidth))),
+        1,
+        kMaximumMapDimension);
+    loaded.mapHeight = std::clamp(
+        static_cast<int>(std::lround(FindFloatField(text, "height").value_or(kMapHeight))),
+        1,
+        kMaximumMapDimension);
     loaded.naturalTerrain.assign(loaded.mapWidth * loaded.mapHeight, "grass");
     loaded.builtTerrain.assign(loaded.mapWidth * loaded.mapHeight, "none");
+    loaded.territory.assign(loaded.mapWidth * loaded.mapHeight, 0);
     if (const auto playerStartBlock = FindBracketedField(text, "player_start", '{', '}')) {
         loaded.playerStart.x = FindFloatField(*playerStartBlock, "x").value_or(loaded.playerStart.x);
         loaded.playerStart.y = FindFloatField(*playerStartBlock, "y").value_or(loaded.playerStart.y);
@@ -834,6 +860,14 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
         loaded.backgroundImagePath = std::filesystem::u8path(*background).wstring();
     }
     LoadTerrainLayer(text, loaded);
+    if (const auto territoryArray = FindBracketedField(text, "territory", '[', ']')) {
+        const auto rows = ExtractStringValues(*territoryArray);
+        for (int y = 0; y < loaded.mapHeight && y < static_cast<int>(rows.size()); ++y) {
+            for (int x = 0; x < loaded.mapWidth && x < static_cast<int>(rows[y].size()); ++x) {
+                loaded.territory[static_cast<size_t>(y) * loaded.mapWidth + x] = rows[y][x] == '1' ? 1 : 0;
+            }
+        }
+    }
     int index = 1;
     for (const std::string& block : ExtractObjectBlocks(*objectsArray)) {
         auto type = FindStringField(block, "type");
@@ -916,6 +950,13 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     }
     out << "    ]\n";
     out << "  },\n";
+    out << "  \"territory\": [\n";
+    for (int y = 0; y < scene.mapHeight; ++y) {
+        out << "    \"";
+        for (int x = 0; x < scene.mapWidth; ++x) out << (TerritoryAt(scene, x, y) ? '1' : '0');
+        out << "\"" << (y + 1 == scene.mapHeight ? "\n" : ",\n");
+    }
+    out << "  ],\n";
     if (scene.hasPlayerStart) {
         out << std::fixed << std::setprecision(1);
         out << "  \"player_start\": {\"x\": " << scene.playerStart.x

@@ -3,8 +3,10 @@
 
 #include "scene.h"
 #include "scene_render.h"
+#include "save_game.h"
 #include "terrain_render.h"
 #include "world.h"
+#include "world_layers.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -64,10 +66,10 @@ struct FooterButtonDef {
 };
 
 constexpr FooterButtonDef kFooterButtons[] = {
-    {FooterAction::CreateMap, L"创建地图  N"},
-    {FooterAction::DeleteMap, L"删除地图"},
-    {FooterAction::LoadScene, L"Load Scene"},
-    {FooterAction::SaveSceneAs, L"Save Scene As"},
+    {FooterAction::CreateMap, L"调整当前层尺寸  N"},
+    {FooterAction::DeleteMap, L"重新生成资源"},
+    {FooterAction::LoadScene, L"加载存档"},
+    {FooterAction::SaveSceneAs, L"场景另存为"},
     {FooterAction::LoadBackground, L"载入底图  L"},
     {FooterAction::ClearBackground, L"清除底图  Shift+L"},
     {FooterAction::ExportBlankMap, L"导出空白图  B"},
@@ -122,6 +124,7 @@ struct EditorState {
     float panStartCameraX = 0.0f;
     float panStartCameraY = 0.0f;
     std::filesystem::path scenePath;
+    std::filesystem::path saveDirectory;
     std::vector<MapEntry> maps;
     int selectedMap = -1;
     bool linkingTeleport = false;
@@ -143,6 +146,8 @@ BitmapCache g_backgroundCache;
 ULONG_PTR g_gdiplusToken = 0;
 bool g_gdiplusStarted = false;
 HWND g_footerButtons[static_cast<int>(sizeof(kFooterButtons) / sizeof(kFooterButtons[0]))]{};
+
+bool PromptOpenSaveFile(HWND owner, std::filesystem::path& outPath);
 
 std::filesystem::path AssetPath(const wchar_t* relative) {
     return std::filesystem::path(RPG_ASSET_DIR) / relative;
@@ -166,22 +171,15 @@ int MapIndexForPath(const std::filesystem::path& path) {
 
 void RefreshMapCatalog() {
     g_editor.maps.clear();
-    const std::filesystem::path root = AssetPath(L"maps");
+    const std::filesystem::path root = g_editor.saveDirectory / L"maps";
     std::error_code ec;
     if (!std::filesystem::is_directory(root, ec)) {
         g_editor.selectedMap = -1;
         return;
     }
 
-    std::vector<std::filesystem::path> paths;
-    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->is_regular_file() && it->path().extension() == L".json") {
-            paths.push_back(it->path());
-        }
-    }
-    std::sort(paths.begin(), paths.end());
-
-    for (const std::filesystem::path& path : paths) {
+    for (const rpg::WorldLayerDef& layer : rpg::WorldLayers()) {
+        const std::filesystem::path path = rpg::WorldLayerPath(root, layer);
         MapEntry entry;
         entry.path = path;
         rpg::Scene probe;
@@ -191,7 +189,8 @@ void RefreshMapCatalog() {
             entry.height = probe.mapHeight;
             entry.hasPlayerStart = probe.hasPlayerStart;
         }
-        entry.displayName = MapDisplayName(path) + L"  " + std::to_wstring(entry.width) + L"x" + std::to_wstring(entry.height);
+        entry.displayName = std::to_wstring(layer.index) + L". " + layer.displayName + L"  " +
+            std::to_wstring(entry.width) + L"x" + std::to_wstring(entry.height);
         g_editor.maps.push_back(std::move(entry));
     }
 
@@ -289,6 +288,10 @@ std::unique_ptr<Gdiplus::Bitmap> LoadBitmapFromPath(const std::filesystem::path&
 }
 
 bool EnsureBackgroundBitmap() {
+    if (!rpg::SceneSupportsBackgroundImage(g_editor.scene)) {
+        ReleaseBackgroundResources();
+        return false;
+    }
     if (g_backgroundCache.path != g_editor.scene.backgroundImagePath) {
         ReleaseBackgroundResources();
         g_backgroundCache.path = g_editor.scene.backgroundImagePath;
@@ -691,7 +694,7 @@ bool PromptSavePngFile(HWND owner, std::filesystem::path& outPath) {
 }
 
 bool DrawBackgroundImage(HDC hdc) {
-    if (g_editor.scene.backgroundImagePath.empty()) {
+    if (g_editor.scene.backgroundImagePath.empty() || !rpg::SceneSupportsBackgroundImage(g_editor.scene)) {
         return false;
     }
     if (!EnsureGdiPlus() || !EnsureBackgroundBitmap()) {
@@ -1074,7 +1077,24 @@ void SetZoomAt(HWND hwnd, int screenX, int screenY, float factor) {
     ClampCamera(hwnd);
 }
 
-void LoadEditorScene() {
+void LoadEditorScene(HWND owner = nullptr) {
+    rpg::ReloadObjectDefs();
+    rpg::ReloadTerrainDefs();
+    if (g_editor.saveDirectory.empty()) {
+        std::filesystem::path saveFile;
+        if (!PromptOpenSaveFile(owner, saveFile)) {
+            g_editor.status = L"请点击“加载存档”选择 save.json";
+            return;
+        }
+        rpg::SaveGameInfo save;
+        std::string error;
+        if (!rpg::LoadSaveGame(saveFile.parent_path(), save, &error)) {
+            g_editor.status = L"存档读取失败";
+            return;
+        }
+        g_editor.saveDirectory = saveFile.parent_path();
+        g_editor.scenePath.clear();
+    }
     RefreshMapCatalog();
     std::filesystem::path path = g_editor.scenePath;
     if (path.empty() || !std::filesystem::is_regular_file(path)) {
@@ -1089,15 +1109,12 @@ void LoadEditorScene() {
             path = g_editor.maps.front().path;
         }
     }
-    if (path.empty()) {
-        path = AssetPath(L"maps/demo_scene.json");
-    }
-    LoadEditorSceneFromPath(path);
+    if (!path.empty()) LoadEditorSceneFromPath(path);
 }
 
 void SaveEditorScene() {
     std::string error;
-    if (rpg::SaveSceneToFile(g_editor.scenePath.empty() ? AssetPath(L"scenes/demo_scene.json") : g_editor.scenePath, g_editor.scene, &error)) {
+    if (!g_editor.scenePath.empty() && rpg::SaveSceneToFile(g_editor.scenePath, g_editor.scene, &error)) {
         g_editor.status = L"已保存场景";
         g_editor.dirty = false;
     } else {
@@ -1119,63 +1136,69 @@ std::filesystem::path NextMapPath() {
 }
 
 void CreateMap(HWND hwnd) {
-    GridSize size;
+    const rpg::WorldLayerDef* layer = rpg::FindWorldLayer(g_editor.scenePath);
+    if (!layer) {
+        g_editor.status = L"当前文件不是固定世界层";
+        return;
+    }
+
+    GridSize size{g_editor.scene.mapWidth, g_editor.scene.mapHeight};
     if (!PromptGridSize(hwnd, size)) {
         return;
     }
-    size.columns = std::clamp(size.columns, 1, 256);
-    size.rows = std::clamp(size.rows, 1, 256);
-
-    rpg::Scene scene;
-    scene.mapWidth = size.columns;
-    scene.mapHeight = size.rows;
-    scene.naturalTerrain.assign(scene.mapWidth * scene.mapHeight, "grass");
-    scene.builtTerrain.assign(scene.mapWidth * scene.mapHeight, "none");
-    scene.playerStart = {
-        rpg::SceneWorldWidth(scene) * 0.5f,
-        rpg::SceneWorldHeight(scene) * 0.5f,
-    };
-    scene.hasPlayerStart = true;
-
-    const std::filesystem::path path = NextMapPath();
-    std::string error;
-    if (!rpg::SaveSceneToFile(path, scene, &error)) {
-        g_editor.status = L"创建地图失败";
+    if (size.columns < layer->minSize || size.columns > layer->maxSize ||
+        size.rows < layer->minSize || size.rows > layer->maxSize) {
+        const std::wstring message = std::wstring(layer->displayName) + L"的宽度和高度必须在 " +
+            std::to_wstring(layer->minSize) + L" 到 " + std::to_wstring(layer->maxSize) + L" 格之间。";
+        MessageBoxW(hwnd, message.c_str(), L"尺寸超出范围", MB_OK | MB_ICONWARNING);
+        g_editor.status = L"尺寸超出当前层允许范围";
         return;
     }
 
-    RefreshMapCatalog();
-    LoadEditorSceneFromPath(path);
-    g_editor.status = L"已创建地图 " + path.stem().wstring();
+    rpg::ResizeWorldLayer(g_editor.scene, *layer, size.columns, size.rows);
+    ReleaseBackgroundResources();
+    MarkDirty(L"已调整当前层尺寸并重新生成资源");
+    const int mapIndex = MapIndexForPath(g_editor.scenePath);
+    if (mapIndex >= 0) {
+        g_editor.maps[mapIndex].width = size.columns;
+        g_editor.maps[mapIndex].height = size.rows;
+        g_editor.maps[mapIndex].displayName = std::to_wstring(layer->index) + L". " + layer->displayName + L"  " +
+            std::to_wstring(size.columns) + L"x" + std::to_wstring(size.rows);
+    }
+}
+
+bool PromptOpenSaveFile(HWND owner, std::filesystem::path& outPath) {
+    wchar_t buffer[MAX_PATH * 4] = L"save.json";
+    const std::wstring initialDir = rpg::DefaultSavesRoot().wstring();
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"RPG 存档 (save.json)\0save.json\0JSON 文件\0*.json\0";
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = static_cast<DWORD>(std::size(buffer));
+    ofn.lpstrInitialDir = initialDir.c_str();
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_EXPLORER;
+    if (!GetOpenFileNameW(&ofn)) return false;
+    outPath = buffer;
+    return outPath.filename() == L"save.json";
 }
 
 void DeleteMap(HWND hwnd) {
-    const int mapIndex = MapIndexForPath(g_editor.scenePath);
-    if (mapIndex < 0 || mapIndex >= static_cast<int>(g_editor.maps.size())) {
-        g_editor.status = L"当前不是地图目录中的地图";
+    const rpg::WorldLayerDef* layer = rpg::FindWorldLayer(g_editor.scenePath);
+    if (!layer) {
+        g_editor.status = L"当前文件不是固定世界层";
         return;
     }
-    if (g_editor.maps.size() <= 1) {
-        g_editor.status = L"至少保留一张地图";
+    if (MessageBoxW(
+            hwnd,
+            L"重新生成当前层的树木、灌木、矿石和传送门？\n手工摆放的其他对象与地形会保留。",
+            L"重新生成资源",
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) {
         return;
     }
-
-    const std::wstring name = g_editor.maps[mapIndex].displayName;
-    const std::wstring prompt = L"确定删除地图“" + name + L"”？\n此操作不可撤销。";
-    if (MessageBoxW(hwnd, prompt.c_str(), L"删除地图", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
-        return;
-    }
-
-    const std::filesystem::path path = g_editor.scenePath;
-    std::error_code ec;
-    if (!std::filesystem::remove(path, ec) || ec) {
-        g_editor.status = L"删除地图失败";
-        return;
-    }
-
-    RefreshMapCatalog();
-    LoadEditorSceneFromPath(g_editor.maps.front().path);
-    g_editor.status = L"已删除地图 " + name;
+    rpg::RegenerateWorldLayerResources(g_editor.scene, *layer);
+    g_editor.selectedObject = -1;
+    MarkDirty(L"已重新生成当前层资源和传送门");
 }
 
 std::string StoreScenePath(const std::filesystem::path& path) {
@@ -1224,8 +1247,8 @@ bool CompleteTeleportLink(HWND hwnd, int targetIndex) {
         return false;
     }
 
-    const std::string targetScenePath = StoreScenePath(g_editor.scenePath);
-    target.targetScene = StoreScenePath(sourceScene);
+    const std::string targetScenePath = g_editor.scenePath.filename().generic_u8string();
+    target.targetScene = sourceScene.filename().generic_u8string();
     target.targetId = sourceId;
 
     bool sourceUpdated = false;
@@ -1270,10 +1293,9 @@ bool CompleteTeleportLink(HWND hwnd, int targetIndex) {
 }
 
 void LoadSceneDialog(HWND hwnd) {
-    std::filesystem::path path;
-    if (PromptOpenSceneFile(hwnd, path)) {
-        LoadEditorSceneFromPath(path);
-    }
+    g_editor.saveDirectory.clear();
+    g_editor.scenePath.clear();
+    LoadEditorScene(hwnd);
 }
 
 void SaveSceneAsDialog(HWND hwnd) {
@@ -1285,6 +1307,16 @@ void SaveSceneAsDialog(HWND hwnd) {
 }
 
 bool LoadBackgroundImage(HWND hwnd) {
+    if (!rpg::SceneSupportsBackgroundImage(g_editor.scene)) {
+        MessageBoxW(
+            hwnd,
+            L"大于 128 x 128 格的地图不支持整图底图，请使用地形和场景对象。",
+            L"无法加载底图",
+            MB_OK | MB_ICONINFORMATION);
+        g_editor.status = L"大地图不支持整图底图";
+        return false;
+    }
+
     std::filesystem::path path;
     if (!PromptOpenImageFile(hwnd, path)) {
         return false;
@@ -1655,14 +1687,31 @@ void DrawPalette(HDC hdc, const RECT& client) {
     DrawTextLine(hdc, g_editor.status, 18, client.bottom - 24, RGB(224, 226, 212));
 }
 
-void DrawMap(HDC hdc) {
-    rpg::DrawTerrain(hdc, g_editor.scene, g_editor.cameraX - kPaletteWidth, g_editor.cameraY, true, g_editor.zoom);
+void DrawMap(HDC hdc, const RECT& client) {
+    rpg::DrawTerrain(
+        hdc,
+        g_editor.scene,
+        g_editor.cameraX - kPaletteWidth,
+        g_editor.cameraY,
+        true,
+        g_editor.zoom,
+        client.right - client.left,
+        client.bottom - client.top);
 }
 
-void DrawSceneObjects(HDC hdc) {
+void DrawSceneObjects(HDC hdc, const RECT& client) {
     std::vector<int> indices;
     indices.reserve(g_editor.scene.objects.size());
     for (int i = 0; i < static_cast<int>(g_editor.scene.objects.size()); ++i) {
+        const rpg::RectF bounds = rpg::ObjectVisualBounds(g_editor.scene.objects[i]);
+        constexpr float margin = 64.0f;
+        const float cameraX = g_editor.cameraX - kPaletteWidth;
+        if (bounds.right * g_editor.zoom - cameraX < kPaletteWidth - margin ||
+            bounds.left * g_editor.zoom - cameraX > client.right + margin ||
+            bounds.bottom * g_editor.zoom - g_editor.cameraY < -margin ||
+            bounds.top * g_editor.zoom - g_editor.cameraY > client.bottom + margin) {
+            continue;
+        }
         indices.push_back(i);
     }
     std::stable_sort(indices.begin(), indices.end(), [](int a, int b) {
@@ -1745,8 +1794,8 @@ void RenderEditor(HWND hwnd, HDC target) {
     SaveDC(hdc);
     IntersectClipRect(hdc, kPaletteWidth, 0, client.right, client.bottom);
     DrawBackgroundImage(hdc);
-    DrawMap(hdc);
-    DrawSceneObjects(hdc);
+    DrawMap(hdc, client);
+    DrawSceneObjects(hdc, client);
     DrawNaturalSelection(hdc);
     RestoreDC(hdc, -1);
 
@@ -1837,7 +1886,7 @@ void HandleKey(HWND hwnd, WPARAM key) {
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
-        LoadEditorScene();
+        LoadEditorScene(hwnd);
         CreateFooterButtons(hwnd);
         ClampCamera(hwnd);
         ClampPaletteScroll(hwnd);

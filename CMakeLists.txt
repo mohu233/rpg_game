@@ -10,13 +10,16 @@ set(RPG_SHARED_SOURCES
     src/item.cpp
     src/scene.cpp
     src/scene_render.cpp
+    src/save_game.cpp
     src/terrain_render.cpp
+    src/world_layers.cpp
 )
 
 set(RPG_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 
 add_executable(FreeWalkRpgDemo WIN32
     src/main.cpp
+    src/territory_render.cpp
     ${RPG_SHARED_SOURCES}
 )
 
@@ -76,7 +79,9 @@ enable_testing()
 
 add_executable(SceneDataTests
     tests/scene_data_tests.cpp
+    src/save_game.cpp
     src/scene.cpp
+    src/world_layers.cpp
 )
 
 target_compile_definitions(SceneDataTests PRIVATE
@@ -84,6 +89,11 @@ target_compile_definitions(SceneDataTests PRIVATE
     _UNICODE
     NOMINMAX
     RPG_ASSET_DIR=L"${RPG_ASSET_DIR}"
+)
+
+target_compile_options(SceneDataTests PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    $<$<CXX_COMPILER_ID:GNU>:-finput-charset=UTF-8>
 )
 
 add_test(NAME SceneDataRoundTrip COMMAND SceneDataTests)

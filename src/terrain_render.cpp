@@ -3,6 +3,7 @@
 #include <gdiplus.h>
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -247,6 +248,34 @@ bool NeighborWins(const TerrainDef* current, const TerrainDef* neighbor) {
     return neighbor->id > current->id;
 }
 
+struct VisibleTileRange {
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+};
+
+VisibleTileRange FindVisibleTiles(
+    const Scene& scene,
+    float cameraX,
+    float cameraY,
+    float zoom,
+    int viewportWidth,
+    int viewportHeight) {
+    if (viewportWidth <= 0 || viewportHeight <= 0 || zoom <= 0.0f) {
+        return {0, 0, scene.mapWidth, scene.mapHeight};
+    }
+
+    const float tileSize = static_cast<float>(kTileSize) * zoom;
+    constexpr int margin = 1;
+    return {
+        std::clamp(static_cast<int>(std::floor(cameraX / tileSize)) - margin, 0, scene.mapWidth),
+        std::clamp(static_cast<int>(std::floor(cameraY / tileSize)) - margin, 0, scene.mapHeight),
+        std::clamp(static_cast<int>(std::ceil((cameraX + viewportWidth) / tileSize)) + margin, 0, scene.mapWidth),
+        std::clamp(static_cast<int>(std::ceil((cameraY + viewportHeight) / tileSize)) + margin, 0, scene.mapHeight),
+    };
+}
+
 } // namespace
 
 COLORREF TerrainFallbackColor(const TerrainDef& terrain) {
@@ -256,7 +285,15 @@ COLORREF TerrainFallbackColor(const TerrainDef& terrain) {
         terrain.fallbackRgb & 0xff);
 }
 
-void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool showGrid, float zoom) {
+void DrawTerrain(
+    HDC hdc,
+    const Scene& scene,
+    float cameraX,
+    float cameraY,
+    bool showGrid,
+    float zoom,
+    int viewportWidth,
+    int viewportHeight) {
     if (!EnsureGdiPlus()) {
         return;
     }
@@ -267,8 +304,11 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
     graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
     graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
 
-    for (int y = 0; y < scene.mapHeight; ++y) {
-        for (int x = 0; x < scene.mapWidth; ++x) {
+    const VisibleTileRange visible = FindVisibleTiles(
+        scene, cameraX, cameraY, zoom, viewportWidth, viewportHeight);
+
+    for (int y = visible.top; y < visible.bottom; ++y) {
+        for (int x = visible.left; x < visible.right; ++x) {
             const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
             const std::string_view currentId = NaturalTerrainAt(scene, x, y);
             if (currentId == "none") {
@@ -303,8 +343,8 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
         }
     }
 
-    for (int y = 0; y < scene.mapHeight; ++y) {
-        for (int x = 0; x < scene.mapWidth; ++x) {
+    for (int y = visible.top; y < visible.bottom; ++y) {
+        for (int x = visible.left; x < visible.right; ++x) {
             const std::string_view builtId = BuiltTerrainAt(scene, x, y);
             if (builtId == "none") {
                 continue;
@@ -317,12 +357,12 @@ void DrawTerrain(HDC hdc, const Scene& scene, float cameraX, float cameraY, bool
         }
     }
 
-    for (int y = 0; y < scene.mapHeight; ++y) {
-        for (int x = 0; x < scene.mapWidth; ++x) {
+    if (showGrid) {
+        for (int y = visible.top; y < visible.bottom; ++y) {
+            for (int x = visible.left; x < visible.right; ++x) {
             const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
-            if (showGrid) {
-                DrawLine(hdc, rect.left, rect.top, rect.right, rect.top, RGB(74, 104, 83));
-                DrawLine(hdc, rect.left, rect.top, rect.left, rect.bottom, RGB(74, 104, 83));
+            DrawLine(hdc, rect.left, rect.top, rect.right, rect.top, RGB(74, 104, 83));
+            DrawLine(hdc, rect.left, rect.top, rect.left, rect.bottom, RGB(74, 104, 83));
             }
         }
     }

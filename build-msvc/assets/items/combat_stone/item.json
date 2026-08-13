@@ -1,0 +1,9 @@
+{
+  "id": "combat_stone",
+  "display_name": "战斗石",
+  "max_stack": 1,
+  "color": "#b64e52",
+  "properties": {
+    "spirit_skill": 3
+  }
+}

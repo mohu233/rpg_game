@@ -124,8 +124,8 @@
       "type": "teleport_point",
       "x": 24.0,
       "y": 336.0,
-      "target_scene": "maps/new_map_1.json",
-      "target_id": "obj_1"
+      "target_scene": "maps/new_map_2.json",
+      "target_id": "obj_11"
     },
     {
       "id": "obj_19",

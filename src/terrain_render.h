@@ -14,7 +14,9 @@ void DrawTerrain(
     float cameraX,
     float cameraY,
     bool showGrid = false,
-    float zoom = 1.0f);
+    float zoom = 1.0f,
+    int viewportWidth = 0,
+    int viewportHeight = 0);
 void ReleaseTerrainRenderResources();
 
 } // namespace rpg

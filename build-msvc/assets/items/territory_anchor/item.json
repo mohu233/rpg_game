@@ -1,0 +1,10 @@
+{
+  "id": "territory_anchor",
+  "display_name": "现实锚点",
+  "max_stack": 1,
+  "color": "#d6c77b",
+  "properties": {
+    "building": 1,
+    "territory_radius": 3
+  }
+}

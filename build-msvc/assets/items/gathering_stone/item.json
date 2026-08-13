@@ -1,0 +1,9 @@
+{
+  "id": "gathering_stone",
+  "display_name": "采集石",
+  "max_stack": 1,
+  "color": "#4f9f69",
+  "properties": {
+    "spirit_skill": 1
+  }
+}

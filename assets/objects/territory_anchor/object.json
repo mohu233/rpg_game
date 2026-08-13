@@ -1,0 +1,20 @@
+{
+  "type": "territory_anchor",
+  "display_name": "现实锚点",
+  "image": "territory_anchor.bmp",
+  "width": 62.0,
+  "height": 72.0,
+  "building": true,
+  "footprint_width": 1,
+  "footprint_height": 1,
+  "draggable": false,
+  "placeable": false,
+  "collision": {
+    "shape": "rect",
+    "x": -18.0,
+    "y": -20.0,
+    "w": 36.0,
+    "h": 20.0,
+    "blocks": true
+  }
+}

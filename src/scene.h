@@ -11,6 +11,9 @@
 
 namespace rpg {
 
+constexpr int kMaximumMapDimension = 500;
+constexpr int kMaximumBackgroundMapDimension = 128;
+
 struct Vec2 {
     float x = 0.0f;
     float y = 0.0f;
@@ -99,6 +102,7 @@ struct Scene {
     int mapHeight = kMapHeight;
     std::vector<std::string> naturalTerrain;
     std::vector<std::string> builtTerrain;
+    std::vector<std::uint8_t> territory;
     Vec2 playerStart{180.0f, 170.0f};
     bool hasPlayerStart = false;
     std::wstring backgroundImagePath;
@@ -111,6 +115,11 @@ inline float SceneWorldWidth(const Scene& scene) {
 
 inline float SceneWorldHeight(const Scene& scene) {
     return static_cast<float>(scene.mapHeight * kTileSize);
+}
+
+inline bool SceneSupportsBackgroundImage(const Scene& scene) {
+    return scene.mapWidth <= kMaximumBackgroundMapDimension &&
+           scene.mapHeight <= kMaximumBackgroundMapDimension;
 }
 
 const std::vector<SceneObjectDef>& ObjectDefs();
@@ -126,6 +135,8 @@ std::string_view NaturalTerrainAt(const Scene& scene, int tx, int ty);
 std::string_view BuiltTerrainAt(const Scene& scene, int tx, int ty);
 bool SetNaturalTerrain(Scene& scene, int tx, int ty, std::string_view terrainId);
 bool SetBuiltTerrain(Scene& scene, int tx, int ty, std::string_view terrainId);
+bool TerritoryAt(const Scene& scene, int tx, int ty);
+bool SetTerritory(Scene& scene, int tx, int ty, bool claimed);
 
 Scene MakeDefaultScene();
 SceneObject MakeObject(std::string_view type, Vec2 pos, int index);

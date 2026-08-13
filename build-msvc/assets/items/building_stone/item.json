@@ -1,0 +1,9 @@
+{
+  "id": "building_stone",
+  "display_name": "建造石",
+  "max_stack": 1,
+  "color": "#c89e43",
+  "properties": {
+    "spirit_skill": 2
+  }
+}
