@@ -712,6 +712,57 @@ Vec2 Normalize(Vec2 value) {
     return length > 0.001f ? Vec2{value.x / length, value.y / length} : Vec2{};
 }
 
+bool ActorProtectedByTerritory(Vec2 pos) {
+    const int tx = static_cast<int>(std::floor(pos.x / kTileSize));
+    const int ty = static_cast<int>(std::floor(pos.y / kTileSize));
+    return rpg::TerritoryAt(g_game.scene, tx, ty);
+}
+
+bool CircleIntersectsTerritory(Vec2 pos, float radius) {
+    const int left = static_cast<int>(std::floor((pos.x - radius) / kTileSize));
+    const int right = static_cast<int>(std::floor((pos.x + radius) / kTileSize));
+    const int top = static_cast<int>(std::floor((pos.y - radius) / kTileSize));
+    const int bottom = static_cast<int>(std::floor((pos.y + radius) / kTileSize));
+    for (int ty = top; ty <= bottom; ++ty) {
+        for (int tx = left; tx <= right; ++tx) {
+            if (!rpg::TerritoryAt(g_game.scene, tx, ty)) continue;
+            const float tileLeft = static_cast<float>(tx * kTileSize);
+            const float tileTop = static_cast<float>(ty * kTileSize);
+            const float nearestX = Clamp(pos.x, tileLeft, tileLeft + kTileSize);
+            const float nearestY = Clamp(pos.y, tileTop, tileTop + kTileSize);
+            const float dx = pos.x - nearestX;
+            const float dy = pos.y - nearestY;
+            if (dx * dx + dy * dy < radius * radius) return true;
+        }
+    }
+    return false;
+}
+
+bool MonsterPositionAvailable(Vec2 pos) {
+    constexpr float monsterRadius = 16.0f;
+    return !CollidesWithMap(pos, monsterRadius) && !CircleIntersectsTerritory(pos, monsterRadius);
+}
+
+bool MoveMonsterOutsideTerritory(Monster& monster) {
+    if (!CircleIntersectsTerritory(monster.pos, 16.0f)) return true;
+    const int originX = static_cast<int>(std::floor(monster.pos.x / kTileSize));
+    const int originY = static_cast<int>(std::floor(monster.pos.y / kTileSize));
+    const int maximumRadius = std::max(g_game.scene.mapWidth, g_game.scene.mapHeight);
+    for (int radius = 1; radius <= maximumRadius; ++radius) {
+        for (int y = originY - radius; y <= originY + radius; ++y) {
+            for (int x = originX - radius; x <= originX + radius; ++x) {
+                if (std::max(std::abs(x - originX), std::abs(y - originY)) != radius) continue;
+                const Vec2 candidate{(x + 0.5f) * kTileSize, (y + 0.5f) * kTileSize};
+                if (MonsterPositionAvailable(candidate)) {
+                    monster.pos = candidate;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 int FollowerCount() {
     return static_cast<int>(std::count_if(g_game.npcs.begin(), g_game.npcs.end(), [](const Npc& npc) {
         return npc.following;
@@ -796,7 +847,7 @@ void EnsureSceneMonsters() {
     constexpr Vec2 nearbyOffsets[] = {{240.0f, 0.0f}, {-240.0f, 0.0f}, {0.0f, 240.0f}, {0.0f, -240.0f}};
     for (const Vec2 offset : nearbyOffsets) {
         const Vec2 pos{g_game.player.pos.x + offset.x, g_game.player.pos.y + offset.y};
-        if (!CollidesWithMap(pos, 16.0f)) {
+        if (MonsterPositionAvailable(pos)) {
             g_game.monsters.push_back({pos});
             break;
         }
@@ -804,7 +855,7 @@ void EnsureSceneMonsters() {
     constexpr Vec2 ratios[] = {{0.32f, 0.28f}, {0.63f, 0.42f}, {0.48f, 0.70f}};
     for (const Vec2 ratio : ratios) {
         Vec2 pos{Clamp(width * ratio.x, 40.0f, width - 40.0f), Clamp(height * ratio.y, 40.0f, height - 40.0f)};
-        if (!CollidesWithMap(pos, 16.0f)) g_game.monsters.push_back({pos});
+        if (MonsterPositionAvailable(pos)) g_game.monsters.push_back({pos});
     }
 }
 
@@ -822,12 +873,14 @@ void UpdateMonsters(float dt) {
     for (int i = 0; i < static_cast<int>(g_game.monsters.size()); ++i) {
         Monster& monster = g_game.monsters[i];
         if (!monster.alive) continue;
+        if (!MoveMonsterOutsideTerritory(monster)) continue;
         monster.attackCooldown = std::max(0.0f, monster.attackCooldown - dt);
+        if (ActorProtectedByTerritory(g_game.player.pos)) continue;
         const float playerDistance = Distance(monster.pos, g_game.player.pos);
         if (playerDistance < 300.0f && playerDistance > 46.0f) {
             const Vec2 direction = Normalize({g_game.player.pos.x - monster.pos.x, g_game.player.pos.y - monster.pos.y});
             const Vec2 next{monster.pos.x + direction.x * 72.0f * dt, monster.pos.y + direction.y * 72.0f * dt};
-            if (!CollidesWithMap(next, 16.0f)) monster.pos = next;
+            if (MonsterPositionAvailable(next)) monster.pos = next;
         } else if (playerDistance <= 46.0f && monster.attackCooldown <= 0.0f) {
             g_game.playerHealth = std::max(0, g_game.playerHealth - 8);
             monster.attackCooldown = 1.1f;

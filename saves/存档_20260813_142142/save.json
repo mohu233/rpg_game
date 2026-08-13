@@ -9,6 +9,7 @@
   "selected_hotbar": 0,
   "held_item": "building_stone",
   "held_count": 1,
+  "followers": [],
   "inventory": [
     {"slot": 31, "item": "gathering_stone", "count": 1},
     {"slot": 32, "item": "combat_stone", "count": 1},
