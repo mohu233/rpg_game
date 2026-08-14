@@ -149,7 +149,7 @@ bool LoadObjectBitmap(HDC hdc, const SceneObjectDef& def, ObjectBitmap& cache) {
     return cache.width > 0 && cache.height > 0;
 }
 
-bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float cameraY, float zoom) {
+bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float cameraY, float zoom, BYTE opacity) {
     const SceneObjectDef* def = FindObjectDef(object.type);
     if (!def) {
         return false;
@@ -173,6 +173,15 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
         graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
         graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
         graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+        Gdiplus::ImageAttributes attributes;
+        Gdiplus::ColorMatrix matrix = {
+            1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, static_cast<float>(opacity) / 255.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+        };
+        attributes.SetColorMatrix(&matrix, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
         return graphics.DrawImage(
                    cache.alphaBitmap.get(),
                    Gdiplus::Rect(bounds.left, bounds.top, width, height),
@@ -180,10 +189,11 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
                    0,
                    cache.width,
                    cache.height,
-                   Gdiplus::UnitPixel) == Gdiplus::Ok;
+                   Gdiplus::UnitPixel, &attributes) == Gdiplus::Ok;
     }
 
-    TransparentBlt(
+    if (opacity == 255) {
+        TransparentBlt(
         hdc,
         bounds.left,
         bounds.top,
@@ -195,6 +205,18 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
         cache.width,
         cache.height,
         kTransparentKey);
+    } else {
+        HDC preview = CreateCompatibleDC(hdc);
+        HBITMAP bitmap = CreateCompatibleBitmap(hdc, width, height);
+        HGDIOBJ oldBitmap = SelectObject(preview, bitmap);
+        BitBlt(preview, 0, 0, width, height, hdc, bounds.left, bounds.top, SRCCOPY);
+        TransparentBlt(preview, 0, 0, width, height, cache.dc, 0, 0, cache.width, cache.height, kTransparentKey);
+        BLENDFUNCTION blend{AC_SRC_OVER, 0, opacity, 0};
+        AlphaBlend(hdc, bounds.left, bounds.top, width, height, preview, 0, 0, width, height, blend);
+        SelectObject(preview, oldBitmap);
+        DeleteObject(bitmap);
+        DeleteDC(preview);
+    }
 
     return true;
 }
@@ -230,11 +252,11 @@ ObjectVisual VisualFor(const SceneObject& object) {
 
 } // namespace
 
-void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float cameraY, bool selected, float zoom) {
+void DrawSceneObject(HDC hdc, const SceneObject& object, float cameraX, float cameraY, bool selected, float zoom, BYTE opacity) {
     const int sx = static_cast<int>(std::round(object.pos.x * zoom - cameraX));
     const int sy = static_cast<int>(std::round(object.pos.y * zoom - cameraY));
 
-    if (!DrawObjectBitmap(hdc, object, cameraX, cameraY, zoom)) {
+    if (!DrawObjectBitmap(hdc, object, cameraX, cameraY, zoom, opacity)) {
         switch (VisualFor(object)) {
         case ObjectVisual::TreeOak:
             DrawTree(hdc, sx, sy);

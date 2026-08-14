@@ -99,6 +99,27 @@ bool SaveGameState(const std::filesystem::path& directory, const SaveGameInfo& i
                << (i + 1 == info.followerNpcIndices.size() ? "" : ", ");
     }
     output << "],\n"
+           << "  \"residents\": [\n";
+    for (size_t i = 0; i < info.residents.size(); ++i) {
+        const SaveGameInfo::ResidentEntry& resident = info.residents[i];
+        output << "    {\"name\": \"" << std::filesystem::path(resident.name).generic_u8string()
+               << "\", \"x\": " << resident.x << ", \"y\": " << resident.y
+               << ", \"stones\": " << resident.spiritStoneMask
+               << ", \"following\": " << (resident.following ? 1 : 0)
+               << ", \"health\": " << resident.health
+               << ", \"affinity\": " << resident.affinity
+               << ", \"personality\": \"" << std::filesystem::path(resident.personality).generic_u8string() << "\"}"
+               << (i + 1 == info.residents.size() ? "\n" : ",\n");
+    }
+    output << "  ],\n"
+           << "  \"anchor_storage\": [\n";
+    for (size_t i = 0; i < info.anchorStorage.size(); ++i) {
+        const SaveGameInfo::InventoryEntry& entry = info.anchorStorage[i];
+        output << "    {\"storage_slot\": " << entry.slot << ", \"item\": \"" << entry.itemId
+               << "\", \"count\": " << entry.count << "}"
+               << (i + 1 == info.anchorStorage.size() ? "\n" : ",\n");
+    }
+    output << "  ],\n"
            << "  \"inventory\": [\n";
     for (size_t i = 0; i < info.inventory.size(); ++i) {
         const SaveGameInfo::InventoryEntry& entry = info.inventory[i];
@@ -139,6 +160,36 @@ bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, st
             }
         }
         if (info.followerNpcIndices.size() > 4) info.followerNpcIndices.resize(4);
+    }
+    info.residents.clear();
+    const std::regex residentPattern(
+        "\\{\\s*\\\"name\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"x\\\"\\s*:\\s*(-?[0-9.]+)\\s*,\\s*"
+        "\\\"y\\\"\\s*:\\s*(-?[0-9.]+)\\s*,\\s*\\\"stones\\\"\\s*:\\s*([0-7])\\s*,\\s*"
+        "\\\"following\\\"\\s*:\\s*([01])\\s*,\\s*\\\"health\\\"\\s*:\\s*([0-9]+)"
+        "(?:\\s*,\\s*\\\"affinity\\\"\\s*:\\s*([0-9]+)\\s*,\\s*\\\"personality\\\"\\s*:\\s*\\\"([^\\\"]*)\\\")?\\s*\\}");
+    for (std::sregex_iterator it(text.begin(), text.end(), residentPattern), end; it != end; ++it) {
+        SaveGameInfo::ResidentEntry resident;
+        resident.name = std::filesystem::u8path((*it)[1].str()).wstring();
+        resident.x = std::stof((*it)[2].str());
+        resident.y = std::stof((*it)[3].str());
+        resident.spiritStoneMask = std::stoi((*it)[4].str());
+        resident.following = (*it)[5].str() == "1";
+        resident.health = std::clamp(std::stoi((*it)[6].str()), 1, 60);
+        resident.affinity = (*it)[7].matched ? std::clamp(std::stoi((*it)[7].str()), 0, 100) : 50;
+        resident.personality = (*it)[8].matched
+            ? std::filesystem::u8path((*it)[8].str()).wstring()
+            : L"谨慎";
+        info.residents.push_back(std::move(resident));
+    }
+    info.anchorStorage.clear();
+    const std::regex storagePattern(
+        "\\{\\s*\\\"storage_slot\\\"\\s*:\\s*([0-9]+)\\s*,\\s*\\\"item\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"count\\\"\\s*:\\s*([0-9]+)\\s*\\}");
+    for (std::sregex_iterator it(text.begin(), text.end(), storagePattern), end; it != end; ++it) {
+        const int slot = std::stoi((*it)[1].str());
+        const int count = std::stoi((*it)[3].str());
+        if (slot >= 0 && slot < 100 && count > 0) {
+            info.anchorStorage.push_back({slot, (*it)[2].str(), count});
+        }
     }
     info.inventory.clear();
     const std::regex entryPattern(

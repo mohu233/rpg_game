@@ -212,7 +212,7 @@ void DrawAirflow(
             const float phase = static_cast<float>(seed % 1000) / 1000.0f;
             const float speed = 0.18f + static_cast<float>((seed >> 3) % 8) * 0.006f;
             const float progress = std::fmod(seconds * speed + phase, 1.0f);
-            const float riseWorld = (2.0f + static_cast<float>((seed >> 7) % 101) / 100.0f) * kTileSize;
+            const float riseWorld = 5.0f * kTileSize;
             const float riseScreen = progress * riseWorld * scale;
             const float sidewaysWorld = std::sin(progress * 7.0f + phase * 6.2831853f) *
                                         (3.0f + static_cast<float>((seed >> 12) % 5));
@@ -224,7 +224,7 @@ void DrawAirflow(
             const int frame = static_cast<int>((seed >> 15) % kAirflowFrameCount);
 
             Gdiplus::ImageAttributes frameOpacity;
-            SetFlameOpacity(frameOpacity, (1.0f - progress) * 0.16f);
+            SetFlameOpacity(frameOpacity, 1.0f - progress);
             const Gdiplus::RectF destination(
                 baseX + sideways - width * 0.5f,
                 baseY - riseScreen - height * 0.5f,

@@ -21,6 +21,17 @@ struct SaveGameInfo {
         int count = 0;
     };
 
+    struct ResidentEntry {
+        std::wstring name;
+        float x = 0.0f;
+        float y = 0.0f;
+        int spiritStoneMask = 0;
+        bool following = false;
+        int health = 60;
+        int affinity = 50;
+        std::wstring personality = L"谨慎";
+    };
+
     std::wstring name;
     GameDifficulty difficulty = GameDifficulty::Normal;
     float resourceMultiplier = 1.0f;
@@ -31,6 +42,8 @@ struct SaveGameInfo {
     int heldItemCount = 0;
     int selectedHotbar = 0;
     std::vector<int> followerNpcIndices;
+    std::vector<ResidentEntry> residents;
+    std::vector<InventoryEntry> anchorStorage;
 };
 
 std::filesystem::path DefaultSavesRoot();

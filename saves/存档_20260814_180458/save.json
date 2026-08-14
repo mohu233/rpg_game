@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "存档_20260814_180458",
+  "difficulty": "normal",
+  "resource_multiplier": 1,
+  "current_map": "veil_lands.json",
+  "player_x": 10044.1,
+  "player_y": 9926.44,
+  "selected_hotbar": 0,
+  "held_item": "building_stone",
+  "held_count": 1,
+  "followers": [],
+  "residents": [
+    {"name": "莉娜", "x": 6975.58, "y": 6820.01, "stones": 0, "following": 0, "health": 60, "affinity": 50, "personality": "谨慎"},
+    {"name": "诺亚", "x": 5886.67, "y": 5628.47, "stones": 0, "following": 0, "health": 60, "affinity": 50, "personality": "谨慎"},
+    {"name": "米拉", "x": 7065.06, "y": 6588.95, "stones": 0, "following": 0, "health": 60, "affinity": 50, "personality": "谨慎"},
+    {"name": "塞恩", "x": 1504.28, "y": 1532.12, "stones": 0, "following": 0, "health": 60, "affinity": 50, "personality": "谨慎"}
+  ],
+  "anchor_storage": [
+  ],
+  "inventory": [
+    {"slot": 40, "item": "gathering_stone", "count": 1},
+    {"slot": 41, "item": "building_stone", "count": 1},
+    {"slot": 42, "item": "combat_stone", "count": 1}
+  ]
+}
