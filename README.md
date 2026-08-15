@@ -1,6 +1,5 @@
 # Free Walk RPG Demo
 
-> **项目设计基准：**[《回环囚地》世界观与玩法契约](docs/world_bible_zh.md) 是后续开发的最高优先级依据。所有系统、剧情、地图和存档设计都不得偏离其中定义的六大法则、核心玩法闭环与三大结局。
 
 A small C++17 + Win32/GDI prototype for a free-movement 2D RPG. It is meant as a first step toward a Pony Town style single-player prototype before adding multiplayer.
 
