@@ -1,0 +1,37 @@
+{
+  "id": "building_stone_iii",
+  "display_name": "建造石III",
+  "max_stack": 1,
+  "color": "#e5c35b",
+  "icon": "items/building_stone_iii/icon.png",
+  "world_image": "items/building_stone_iii/world.png",
+  "source": "工作台合成",
+  "category": "spirit",
+  "properties": {
+    "spirit_skill": 2,
+    "stone_tier": 3,
+    "build_discount": 35,
+    "teleport_building": 1
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "topaz",
+        "count": 2
+      },
+      {
+        "item": "exotic_ore",
+        "count": 1
+      },
+      {
+        "item": "exotic_wood",
+        "count": 1
+      },
+      {
+        "item": "anchor_fragment",
+        "count": 1
+      }
+    ]
+  }
+}

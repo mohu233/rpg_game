@@ -18,9 +18,11 @@
 #include <chrono>
 #include <memory>
 #include <map>
+#include <random>
 #include <cwctype>
 #include <limits>
 #include <sstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -54,10 +56,17 @@ constexpr int kAnchorStorageSlotBase = 1000;
 constexpr int kInventoryCellSize = 48;
 constexpr int kInventoryCellGap = 5;
 constexpr int kMaximumFollowers = 4;
+constexpr float kGameDaySeconds = 12.0f * 60.0f;
+constexpr float kMinimumRecruitmentStability = 25.0f;
+constexpr int kResidentRealityLoad = 10;
+constexpr int kWorkbenchRealityLoad = 2;
+constexpr int kTeleportRealityLoad = 8;
 constexpr float kNpcMinimumDistance = 80.0f;
 constexpr float kNpcFollowStartDistance = 200.0f;
 constexpr float kNpcFollowStopDistance = 145.0f;
 constexpr float kNpcCombatLeashDistance = 500.0f;
+constexpr int kNpcMaximumHealth = 60;
+constexpr int kNpcRetreatHealth = kNpcMaximumHealth * 30 / 100;
 
 #ifndef RPG_ASSET_DIR
 #define RPG_ASSET_DIR L"assets"
@@ -83,6 +92,13 @@ struct SpriteSheet {
     bool loaded = false;
 };
 
+enum class NpcTaskMode { Idle, Facility, Gathering, Returning };
+
+struct NpcCargoStack {
+    std::string id;
+    int count = 0;
+};
+
 struct Npc {
     Vec2 pos;
     Vec2 velocity{};
@@ -91,6 +107,9 @@ struct Npc {
     bool following = false;
     std::array<bool, 3> spiritStones{};
     bool inCombat = false;
+    bool evading = false;
+    int threatMonster = -1;
+    float evadeTime = 0.0f;
     bool moving = false;
     float attackCooldown = 0.0f;
     bool returningHome = false;
@@ -100,15 +119,21 @@ struct Npc {
     int health = 60;
     int affinity = 50;
     std::wstring personality = L"谨慎";
+    NpcTaskMode taskMode = NpcTaskMode::Idle;
+    std::string gatheringTarget = "any";
+    std::string facilityId;
+    std::wstring workMap;
+    std::string gatheringObjectId;
+    float workTimer = 0.0f;
+    std::array<NpcCargoStack, 10> cargo{};
 };
 
 std::vector<Npc> MakeDefaultNpcs() {
-    return {
-        {{360.0f, 170.0f}, {}, L"莉娜", L"活人的脚步会在囚地留下痕迹。"},
-        {{780.0f, 430.0f}, {}, L"诺亚", L"结界之外，影子无法触碰现实。"},
-        {{1040.0f, 250.0f}, {}, L"米拉", L"灵石能短暂赋予影子实体。"},
-        {{520.0f, 640.0f}, {}, L"塞恩", L"锚点稳定时，我能感受到现实的重量。"},
-    };
+    return {};
+}
+
+bool IsLegacyDefaultNpcName(const std::wstring& name) {
+    return name == L"莉娜" || name == L"诺亚" || name == L"米拉" || name == L"塞恩";
 }
 
 enum class WandererState { Waiting, Accepted, Expelled };
@@ -166,12 +191,35 @@ struct WorldPickup {
     bool activated = false;
 };
 
+enum class AnchorPanelTab {
+    Storage,
+    Workbench,
+    Residents,
+    Work,
+    Technology,
+};
+
+enum class DeathPhase {
+    None,
+    CompensationIntro,
+    AwaitingSacrifice,
+    RevivalFade,
+    FinalEnding,
+};
+
 struct Game {
     Player player;
     Inventory inventory;
     std::array<ItemStack, kAnchorStorageSlotCount> anchorStorage;
     bool anchorPanelOpen = false;
+    AnchorPanelTab anchorPanelTab = AnchorPanelTab::Residents;
     int anchorSelectedNpc = -1;
+    int anchorSelectedWorkbenchRecipe = 0;
+    std::set<std::string> unlockedBlueprints{"territory_anchor"};
+    int territoryLevel = 1;
+    float territoryStability = 100.0f;
+    float territoryDayProgress = 0.0f;
+    int territoryDaysPassed = 0;
     std::map<std::wstring, std::vector<WorldPickup>> pickupsByScene;
     std::wstring activePickupSceneKey;
     std::wstring pickupNotice;
@@ -196,6 +244,8 @@ struct Game {
     POINT npcContextPoint{};
     int activeCombatMonster = -1;
     int playerHealth = 100;
+    DeathPhase deathPhase = DeathPhase::None;
+    float deathTime = 0.0f;
     float teleportCooldown = 0.0f;
     bool mapOpen = false;
     float mapZoom = 1.0f;
@@ -203,6 +253,8 @@ struct Game {
     bool mapDragging = false;
     POINT mapDragPoint{};
     std::map<std::wstring, std::vector<std::uint8_t>> exploredTilesByScene;
+    bool explorationDirty = false;
+    float explorationSaveTimer = 0.0f;
     LARGE_INTEGER lastTick{};
     LARGE_INTEGER freq{};
 };
@@ -242,6 +294,10 @@ SpriteSheet g_playerAttackSide;
 SpriteSheet g_playerAttackBack;
 std::array<SpriteSheet, 3> g_playerIdleSprites;
 
+bool NpcInCurrentScene(const Npc& npc) {
+    return npc.workMap.empty() || npc.workMap == g_currentScenePath.filename().wstring();
+}
+
 // Placement helpers are used by rendering and input code before their implementations.
 rpg::Vec2 BuildingAnchorPosition(const std::string& objectType, int tx, int ty);
 ItemStack* InventoryItemAt(int index);
@@ -257,6 +313,9 @@ struct ItemBitmapCache {
 std::vector<ItemBitmapCache> g_itemBitmaps;
 std::unique_ptr<Gdiplus::Bitmap> g_anchorButtonIcon;
 bool g_anchorButtonIconAttempted = false;
+
+void SaveCurrentGame();
+bool UpdateDeathSequence(float dt);
 
 float RenderScale() {
     return kWorldScale * g_game.zoom;
@@ -393,7 +452,7 @@ bool CollidesWithMap(Vec2 pos, float radius) {
 
 bool CollidesWithNpcs(Vec2 pos, float radius, int ignoredNpcIndex = -1) {
     for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
-        if (i == ignoredNpcIndex || g_game.npcs[i].shadowForm) continue;
+        if (i == ignoredNpcIndex || g_game.npcs[i].shadowForm || !NpcInCurrentScene(g_game.npcs[i])) continue;
         const float dx = pos.x - g_game.npcs[i].pos.x;
         const float dy = pos.y - g_game.npcs[i].pos.y;
         const float combinedRadius = radius + kNpcRadius;
@@ -405,7 +464,7 @@ bool CollidesWithNpcs(Vec2 pos, float radius, int ignoredNpcIndex = -1) {
 void TryMove(Player& player, Vec2 delta) {
     const auto blockedByFollower = [](Vec2 pos) {
         return std::any_of(g_game.npcs.begin(), g_game.npcs.end(), [&](const Npc& npc) {
-            if (!npc.following || npc.shadowForm) return false;
+            if (!npc.following || npc.shadowForm || !NpcInCurrentScene(npc)) return false;
             const float dx = pos.x - npc.pos.x;
             const float dy = pos.y - npc.pos.y;
             const float nextDistanceSquared = dx * dx + dy * dy;
@@ -467,6 +526,24 @@ ItemStack MakeItemStack(std::string_view id, int count) {
         stack.count = std::max(1, count);
     }
     return stack;
+}
+
+int SpiritSkillIndex(std::string_view id) {
+    if (id.rfind("gathering_stone", 0) == 0) return 0;
+    if (id.rfind("building_stone", 0) == 0) return 1;
+    if (id.rfind("combat_stone", 0) == 0) return 2;
+    return -1;
+}
+
+int SpiritStoneTier(std::string_view id) {
+    if (SpiritSkillIndex(id) < 0) return 0;
+    if (id.size() >= 4 && id.substr(id.size() - 4) == "_iii") return 3;
+    if (id.size() >= 3 && id.substr(id.size() - 3) == "_ii") return 2;
+    return 1;
+}
+
+bool HeldSpiritSkill(int skillIndex) {
+    return SpiritSkillIndex(g_game.inventory.heldItem.id) == skillIndex;
 }
 
 std::wstring ScenePickupKey(const std::filesystem::path& path) {
@@ -536,6 +613,22 @@ std::vector<WorldPickup>& CurrentPickups() {
     return g_game.pickupsByScene[g_game.activePickupSceneKey];
 }
 
+std::mt19937 g_lootRandom{std::random_device{}()};
+
+void SpawnPickup(Vec2 position, std::string_view itemId, int count = 1) {
+    ItemStack item = MakeItemStack(itemId, count);
+    if (item.id.empty()) return;
+    CurrentPickups().push_back({position, std::move(item)});
+}
+
+void SpawnMonsterLoot(Vec2 position) {
+    std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+    if (roll(g_lootRandom) < 0.01f) SpawnPickup(position, "anchor_fragment");
+    if (roll(g_lootRandom) < 0.12f) SpawnPickup({position.x - 10.0f, position.y}, "healing_herb");
+    if (roll(g_lootRandom) < 0.10f) SpawnPickup({position.x + 10.0f, position.y}, "berry");
+    if (roll(g_lootRandom) < 0.06f) SpawnPickup({position.x, position.y + 10.0f}, "wheat");
+}
+
 bool StoreItem(ItemStack& incoming) {
     const rpg::ItemDef* def = rpg::FindItemDef(incoming.id);
     const int maxStack = def ? def->maxStack : 1;
@@ -582,6 +675,8 @@ void AppendConsoleLine(std::wstring line) {
 }
 
 bool SpawnWanderingShadow();
+void SettleTerritoryDay();
+void EnsureSceneMonsters();
 
 std::wstring Lowercase(std::wstring value) {
     std::transform(value.begin(), value.end(), value.begin(), [](wchar_t value) {
@@ -611,7 +706,9 @@ void ExecuteConsoleCommand() {
     AppendConsoleLine(L"> " + command);
     if (Lowercase(command) == L"help") {
         AppendConsoleLine(L"add <item id/name> <quantity>");
+        AppendConsoleLine(L"add monster/怪物 <quantity> - spawn at mouse");
         AppendConsoleLine(L"shadow - spawn a wandering shadow near territory");
+        AppendConsoleLine(L"day - settle one territory day");
         AppendConsoleLine(L"debug - toggle collision outlines");
         AppendConsoleLine(L"clear - clear console output");
         return;
@@ -632,6 +729,11 @@ void ExecuteConsoleCommand() {
         AppendConsoleLine(g_console.showCollisionLines
             ? L"Collision outlines enabled."
             : L"Collision outlines disabled.");
+        return;
+    }
+    if (Lowercase(command) == L"day") {
+        SettleTerritoryDay();
+        AppendConsoleLine(L"Territory day settled.");
         return;
     }
 
@@ -660,6 +762,30 @@ void ExecuteConsoleCommand() {
     const long long parsed = std::wcstoll(quantityText.c_str(), &end, 10);
     if (quantityText.empty() || !end || *end != L'\0' || parsed <= 0 || parsed > 999999) {
         AppendConsoleLine(L"Quantity must be between 1 and 999999.");
+        return;
+    }
+    const std::wstring targetName = Lowercase(itemName);
+    if (targetName == L"monster" || targetName == L"怪物" || targetName == L"畸变暗影") {
+        if (parsed > 100) {
+            AppendConsoleLine(L"Monster quantity must be between 1 and 100.");
+            return;
+        }
+        const POINT mouse = g_game.inventory.mousePoint;
+        if (mouse.x < 0 || mouse.y < 0) {
+            AppendConsoleLine(L"Move the mouse into the game window first.");
+            return;
+        }
+        EnsureSceneMonsters();
+        const float scale = RenderScale();
+        constexpr float radius = 16.0f;
+        const Vec2 position{
+            Clamp((static_cast<float>(mouse.x) + g_game.camera.x) / scale,
+                  radius, std::max(radius, rpg::SceneWorldWidth(g_game.scene) - radius)),
+            Clamp((static_cast<float>(mouse.y) + g_game.camera.y) / scale,
+                  radius, std::max(radius, rpg::SceneWorldHeight(g_game.scene) - radius)),
+        };
+        for (int i = 0; i < static_cast<int>(parsed); ++i) g_game.monsters.push_back({position});
+        AppendConsoleLine(L"Spawned monster x" + std::to_wstring(parsed) + L" at mouse position.");
         return;
     }
     const rpg::ItemDef* def = FindConsoleItem(itemName);
@@ -709,6 +835,34 @@ void UpdateWorldPickups(float dt) {
     }
 }
 
+bool RevealCurrentSceneAroundPlayer() {
+    if (g_currentScenePath.empty() || g_game.scene.mapWidth <= 0 || g_game.scene.mapHeight <= 0) return false;
+    const std::wstring sceneKey = g_currentScenePath.filename().wstring();
+    std::vector<std::uint8_t>& explored = g_game.exploredTilesByScene[sceneKey];
+    const int tileCount = g_game.scene.mapWidth * g_game.scene.mapHeight;
+    bool changed = false;
+    if (static_cast<int>(explored.size()) != tileCount) {
+        explored.assign(tileCount, 0);
+        changed = true;
+    }
+    const int centerX = std::clamp(static_cast<int>(g_game.player.pos.x / kTileSize), 0, g_game.scene.mapWidth - 1);
+    const int centerY = std::clamp(static_cast<int>(g_game.player.pos.y / kTileSize), 0, g_game.scene.mapHeight - 1);
+    constexpr int kRevealRadius = 3;
+    for (int ty = std::max(0, centerY - kRevealRadius); ty <= std::min(g_game.scene.mapHeight - 1, centerY + kRevealRadius); ++ty) {
+        for (int tx = std::max(0, centerX - kRevealRadius); tx <= std::min(g_game.scene.mapWidth - 1, centerX + kRevealRadius); ++tx) {
+            const int dx = tx - centerX;
+            const int dy = ty - centerY;
+            const int index = ty * g_game.scene.mapWidth + tx;
+            if (dx * dx + dy * dy <= kRevealRadius * kRevealRadius && explored[index] == 0) {
+                explored[index] = 1;
+                changed = true;
+            }
+        }
+    }
+    if (changed) g_game.explorationDirty = true;
+    return changed;
+}
+
 void SaveCurrentGame() {
     if (g_activeSaveDirectory.empty() || g_screen != AppScreen::Playing) {
         return;
@@ -738,6 +892,16 @@ void SaveCurrentGame() {
     g_activeSave.heldItemId = g_game.inventory.heldItem.id;
     g_activeSave.heldItemCount = g_game.inventory.heldItem.count;
     g_activeSave.selectedHotbar = g_game.inventory.selectedHotbar;
+    g_activeSave.unlockedBlueprints.assign(g_game.unlockedBlueprints.begin(), g_game.unlockedBlueprints.end());
+    g_activeSave.territoryLevel = g_game.territoryLevel;
+    g_activeSave.territoryStability = g_game.territoryStability;
+    g_activeSave.territoryDayProgress = g_game.territoryDayProgress;
+    g_activeSave.territoryDaysPassed = g_game.territoryDaysPassed;
+    g_activeSave.exploredMaps.clear();
+    for (const auto& [mapName, tiles] : g_game.exploredTilesByScene) {
+        if (tiles.empty()) continue;
+        g_activeSave.exploredMaps.push_back({mapName, static_cast<int>(tiles.size()), tiles});
+    }
     g_activeSave.followerNpcIndices.clear();
     g_activeSave.residents.clear();
     for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
@@ -745,10 +909,30 @@ void SaveCurrentGame() {
         if (npc.following) g_activeSave.followerNpcIndices.push_back(i);
         int stoneMask = 0;
         for (int stone = 0; stone < 3; ++stone) if (npc.spiritStones[stone]) stoneMask |= 1 << stone;
-        g_activeSave.residents.push_back({npc.name, npc.pos.x, npc.pos.y, stoneMask, npc.following, npc.health,
-                                          npc.affinity, npc.personality});
+        rpg::SaveGameInfo::ResidentEntry saved;
+        saved.name = npc.name;
+        saved.x = npc.pos.x;
+        saved.y = npc.pos.y;
+        saved.spiritStoneMask = stoneMask;
+        saved.following = npc.following;
+        saved.health = npc.health;
+        saved.affinity = npc.affinity;
+        saved.personality = npc.personality;
+        saved.taskMode = static_cast<int>(npc.taskMode);
+        saved.gatheringTarget = npc.gatheringTarget;
+        saved.facilityId = npc.facilityId;
+        saved.workMap = npc.workMap;
+        for (int slot = 0; slot < static_cast<int>(npc.cargo.size()); ++slot) {
+            if (!npc.cargo[slot].id.empty() && npc.cargo[slot].count > 0) {
+                saved.cargo.push_back({slot, npc.cargo[slot].id, npc.cargo[slot].count});
+            }
+        }
+        g_activeSave.residents.push_back(std::move(saved));
     }
-    rpg::SaveGameState(g_activeSaveDirectory, g_activeSave);
+    if (rpg::SaveGameState(g_activeSaveDirectory, g_activeSave)) {
+        g_game.explorationDirty = false;
+        g_game.explorationSaveTimer = 0.0f;
+    }
 }
 
 bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
@@ -774,14 +958,28 @@ bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
         : Vec2{g_game.scene.playerStart.x, g_game.scene.playerStart.y};
     g_game.inventory = Inventory{};
     g_game.anchorStorage = {};
+    g_game.unlockedBlueprints.clear();
+    g_game.unlockedBlueprints.insert(g_activeSave.unlockedBlueprints.begin(), g_activeSave.unlockedBlueprints.end());
+    g_game.unlockedBlueprints.insert("territory_anchor");
+    g_game.territoryLevel = g_activeSave.territoryLevel;
+    g_game.territoryStability = g_activeSave.territoryStability;
+    g_game.territoryDayProgress = g_activeSave.territoryDayProgress;
+    g_game.territoryDaysPassed = g_activeSave.territoryDaysPassed;
+    g_game.exploredTilesByScene.clear();
+    for (const rpg::SaveGameInfo::ExploredMapEntry& explored : g_activeSave.exploredMaps) {
+        if (explored.tileCount > 0 && explored.tileCount == static_cast<int>(explored.tiles.size())) {
+            g_game.exploredTilesByScene[explored.mapName] = explored.tiles;
+        }
+    }
+    g_game.explorationDirty = false;
+    g_game.explorationSaveTimer = 0.0f;
     g_game.npcs = MakeDefaultNpcs();
     for (const rpg::SaveGameInfo::InventoryEntry& entry : g_activeSave.inventory) {
         if (entry.slot >= 0 && entry.slot < static_cast<int>(g_game.inventory.slots.size())) {
             g_game.inventory.slots[entry.slot] = MakeItemStack(entry.itemId, entry.count);
         } else if (entry.slot >= kInventorySlotCount && entry.slot < kInventorySlotCount + kSpiritSlotCount) {
             const int spiritIndex = entry.slot - kInventorySlotCount;
-            constexpr const char* stoneIds[] = {"gathering_stone", "building_stone", "combat_stone"};
-            if (entry.itemId == stoneIds[spiritIndex]) {
+            if (SpiritSkillIndex(entry.itemId) == spiritIndex) {
                 g_game.inventory.spiritSlots[spiritIndex] = MakeItemStack(entry.itemId, 1);
             }
         }
@@ -797,6 +995,7 @@ bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
     if (!g_activeSave.residents.empty()) {
         g_game.npcs.clear();
         for (const rpg::SaveGameInfo::ResidentEntry& saved : g_activeSave.residents) {
+            if (IsLegacyDefaultNpcName(saved.name)) continue;
             Npc npc;
             npc.pos = {saved.x, saved.y};
             npc.name = saved.name;
@@ -805,6 +1004,15 @@ bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
             npc.health = saved.health;
             npc.affinity = saved.affinity;
             npc.personality = saved.personality;
+            npc.taskMode = static_cast<NpcTaskMode>(std::clamp(saved.taskMode, 0, 3));
+            npc.gatheringTarget = saved.gatheringTarget.empty() ? "any" : saved.gatheringTarget;
+            npc.facilityId = saved.facilityId;
+            npc.workMap = saved.workMap.empty() ? g_currentScenePath.filename().wstring() : saved.workMap;
+            for (const rpg::SaveGameInfo::InventoryEntry& cargo : saved.cargo) {
+                if (cargo.slot >= 0 && cargo.slot < static_cast<int>(npc.cargo.size())) {
+                    npc.cargo[cargo.slot] = {cargo.itemId, cargo.count};
+                }
+            }
             for (int stone = 0; stone < 3; ++stone) npc.spiritStones[stone] = (saved.spiritStoneMask & (1 << stone)) != 0;
             g_game.npcs.push_back(std::move(npc));
         }
@@ -817,10 +1025,16 @@ bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
     for (Npc& npc : g_game.npcs) {
         npc.following = false;
         npc.inCombat = false;
+        npc.evading = false;
+        npc.threatMonster = -1;
+        npc.evadeTime = 0.0f;
         npc.moving = false;
     }
     for (const int index : g_activeSave.followerNpcIndices) {
-        if (index >= 0 && index < static_cast<int>(g_game.npcs.size())) g_game.npcs[index].following = true;
+        if (index >= 0 && index < static_cast<int>(g_game.npcs.size())) {
+            g_game.npcs[index].following = true;
+            g_game.npcs[index].taskMode = NpcTaskMode::Idle;
+        }
     }
     bool hasAnchor = false;
     for (const ItemStack& item : g_game.inventory.slots) hasAnchor = hasAnchor || item.id == "territory_anchor";
@@ -834,8 +1048,12 @@ bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
         }
     }
     g_game.zoom = g_defaultZoom;
+    g_game.playerHealth = 100;
+    g_game.deathPhase = DeathPhase::None;
+    g_game.deathTime = 0.0f;
     g_game.wanderingShadows.clear();
     g_game.shadowDialogIndex = -1;
+    RevealCurrentSceneAroundPlayer();
     ActivateScenePickups(scenePath);
     g_screen = AppScreen::Playing;
     return true;
@@ -884,9 +1102,14 @@ bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view target
     int followerSlot = 0;
     for (Npc& npc : g_game.npcs) {
         npc.inCombat = false;
+        npc.evading = false;
+        npc.threatMonster = -1;
+        npc.evadeTime = 0.0f;
         npc.moving = false;
         npc.velocity = {};
         if (!npc.following) continue;
+        npc.workMap = path.filename().wstring();
+        npc.taskMode = NpcTaskMode::Idle;
         constexpr Vec2 offsets[kMaximumFollowers] = {
             {-125.0f, 0.0f}, {125.0f, 0.0f}, {0.0f, 125.0f}, {0.0f, -125.0f},
         };
@@ -898,7 +1121,153 @@ bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view target
         npc.moving = npc.pos.x == g_game.player.pos.x && npc.pos.y == g_game.player.pos.y;
     }
     g_currentScenePath = path;
+    RevealCurrentSceneAroundPlayer();
     ActivateScenePickups(path);
+    SaveCurrentGame();
+    return true;
+}
+
+void CenterCameraAt(Vec2 position) {
+    const float renderScale = RenderScale();
+    const float worldW = rpg::SceneWorldWidth(g_game.scene) * renderScale;
+    const float worldH = rpg::SceneWorldHeight(g_game.scene) * renderScale;
+    g_game.camera.x = Clamp(position.x * renderScale - kWindowWidth * 0.5f, 0.0f,
+                            std::max(0.0f, worldW - kWindowWidth));
+    g_game.camera.y = Clamp(position.y * renderScale - kWindowHeight * 0.5f, 0.0f,
+                            std::max(0.0f, worldH - kWindowHeight));
+}
+
+bool LoadSceneForDeath(const std::filesystem::path& path) {
+    rpg::Scene nextScene;
+    std::string error;
+    if (!rpg::LoadSceneFromFile(path, nextScene, &error)) return false;
+    if (!g_currentScenePath.empty()) rpg::SaveSceneToFile(g_currentScenePath, g_game.scene);
+    ReleaseBackgroundResources();
+    g_game.scene = std::move(nextScene);
+    g_game.wanderingShadows.clear();
+    g_game.shadowDialogIndex = -1;
+    g_game.monsters.clear();
+    g_game.monsterSceneKey.clear();
+    g_game.activeCombatMonster = -1;
+    for (Npc& npc : g_game.npcs) {
+        npc.inCombat = false;
+        npc.evading = false;
+        npc.threatMonster = -1;
+        npc.evadeTime = 0.0f;
+    }
+    rpg::InvalidateTerritoryRenderCache();
+    g_currentScenePath = path;
+    ActivateScenePickups(path);
+    return true;
+}
+
+bool ReturnViewToRealityAnchor() {
+    if (g_activeSaveDirectory.empty()) return false;
+    const std::filesystem::path maps = g_activeSaveDirectory / L"maps";
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(maps, ec)) {
+        if (ec || !entry.is_regular_file() || entry.path().extension() != L".json") continue;
+        rpg::Scene scene;
+        if (!rpg::LoadSceneFromFile(entry.path(), scene)) continue;
+        const auto anchor = std::find_if(scene.objects.begin(), scene.objects.end(), [](const rpg::SceneObject& object) {
+            return object.type == "territory_anchor";
+        });
+        if (anchor == scene.objects.end()) continue;
+        if (entry.path() != g_currentScenePath && !LoadSceneForDeath(entry.path())) return false;
+        const auto loadedAnchor = std::find_if(g_game.scene.objects.begin(), g_game.scene.objects.end(), [](const rpg::SceneObject& object) {
+            return object.type == "territory_anchor";
+        });
+        if (loadedAnchor != g_game.scene.objects.end()) CenterCameraAt({loadedAnchor->pos.x, loadedAnchor->pos.y});
+        return true;
+    }
+    return false;
+}
+
+void BeginDeathSequence() {
+    g_game.deathPhase = g_game.npcs.empty() ? DeathPhase::FinalEnding : DeathPhase::CompensationIntro;
+    g_game.deathTime = 0.0f;
+    g_game.player.vel = {};
+    g_game.player.attacking = false;
+    g_game.player.attackTime = 0.0f;
+    g_game.up = g_game.down = g_game.left = g_game.right = false;
+    g_game.interact = false;
+    g_game.inventory.open = false;
+    g_game.inventory.dragging = false;
+    g_game.anchorPanelOpen = false;
+    g_game.mapOpen = false;
+    g_game.showTalk = false;
+    g_game.shadowDialogIndex = -1;
+    g_game.npcContextIndex = -1;
+    g_console.open = false;
+    ReleaseCapture();
+}
+
+void FinishTerminalDeath() {
+    std::string error;
+    const std::filesystem::path deletedSave = g_activeSaveDirectory;
+    const bool deleted = !deletedSave.empty() && rpg::DeleteSaveGame(deletedSave, &error);
+    const LARGE_INTEGER frequency = g_game.freq;
+    const LARGE_INTEGER lastTick = g_game.lastTick;
+    ReleaseBackgroundResources();
+    g_game = Game{};
+    g_game.freq = frequency;
+    g_game.lastTick = lastTick;
+    g_console = DebugConsole{};
+    g_activeSaveDirectory.clear();
+    g_currentScenePath.clear();
+    g_activeSave = rpg::SaveGameInfo{};
+    g_saveList = rpg::ListSaveGames(rpg::DefaultSavesRoot());
+    g_menuStatus = deleted ? L"轮回已经终结，存档已删除" : L"轮回已经终结，但存档删除失败";
+    g_screen = AppScreen::MainMenu;
+}
+
+bool UpdateDeathSequence(float dt) {
+    if (g_game.deathPhase == DeathPhase::None) {
+        if (g_game.playerHealth > 0) return false;
+        BeginDeathSequence();
+    }
+    g_game.player.vel = {};
+    g_game.player.animTime = 0.0f;
+    g_game.deathTime += dt;
+    if (g_game.deathPhase == DeathPhase::CompensationIntro && g_game.deathTime >= 3.0f) {
+        ReturnViewToRealityAnchor();
+        g_game.deathPhase = DeathPhase::AwaitingSacrifice;
+        g_game.deathTime = 0.0f;
+    } else if (g_game.deathPhase == DeathPhase::RevivalFade && g_game.deathTime >= 1.0f) {
+        g_game.deathPhase = DeathPhase::None;
+        g_game.deathTime = 0.0f;
+    } else if (g_game.deathPhase == DeathPhase::FinalEnding && g_game.deathTime >= 4.5f) {
+        FinishTerminalDeath();
+    }
+    return true;
+}
+
+bool SacrificeNpc(int index) {
+    if (g_game.deathPhase != DeathPhase::AwaitingSacrifice || index < 0 ||
+        index >= static_cast<int>(g_game.npcs.size())) return false;
+    const Npc sacrificed = g_game.npcs[index];
+    const std::wstring mapName = sacrificed.workMap.empty() ? g_currentScenePath.filename().wstring() : sacrificed.workMap;
+    const std::filesystem::path destinationMap = g_activeSaveDirectory / L"maps" / mapName;
+    if (destinationMap != g_currentScenePath && !LoadSceneForDeath(destinationMap)) {
+        g_game.pickupNotice = L"无法读取被献祭居民所在的地图";
+        g_game.pickupNoticeTime = 2.0f;
+        return false;
+    }
+    g_game.npcs.erase(g_game.npcs.begin() + index);
+    g_game.anchorSelectedNpc = -1;
+    g_game.nearbyNpc = -1;
+    g_game.npcContextIndex = -1;
+    g_game.activeCombatMonster = -1;
+    g_game.player.pos = sacrificed.pos;
+    g_game.playerHealth = 100;
+    g_game.player.animTime = 0.0f;
+    CenterCameraAt(g_game.player.pos);
+    RevealCurrentSceneAroundPlayer();
+    g_game.deathPhase = DeathPhase::RevivalFade;
+    g_game.deathTime = 0.0f;
+    g_game.pickupNotice = sacrificed.name + L" 已代替锚点消散";
+    g_game.pickupNoticeTime = 2.5f;
+    if (!g_currentScenePath.empty()) rpg::SaveSceneToFile(g_currentScenePath, g_game.scene);
     SaveCurrentGame();
     return true;
 }
@@ -937,6 +1306,131 @@ bool ActorProtectedByTerritory(Vec2 pos) {
     const int tx = static_cast<int>(std::floor(pos.x / kTileSize));
     const int ty = static_cast<int>(std::floor(pos.y / kTileSize));
     return rpg::TerritoryAt(g_game.scene, tx, ty);
+}
+
+int TerritoryAreaLimit() {
+    constexpr int limits[] = {225, 625, 1225, 2025};
+    return limits[std::clamp(g_game.territoryLevel, 1, 4) - 1];
+}
+
+int TerritoryTileCount() {
+    return static_cast<int>(std::count_if(g_game.scene.territory.begin(), g_game.scene.territory.end(),
+        [](std::uint8_t claimed) { return claimed != 0; }));
+}
+
+int RealityCapacityLimit() {
+    constexpr int limits[] = {40, 70, 110, 160};
+    return limits[std::clamp(g_game.territoryLevel, 1, 4) - 1];
+}
+
+bool RealityAnchorExists() {
+    return std::any_of(g_game.scene.objects.begin(), g_game.scene.objects.end(), [](const rpg::SceneObject& object) {
+        return object.type == "territory_anchor";
+    });
+}
+
+int PendingResidentCount() {
+    return static_cast<int>(std::count_if(g_game.wanderingShadows.begin(), g_game.wanderingShadows.end(),
+        [](const WanderingShadow& shadow) { return shadow.state == WandererState::Accepted; }));
+}
+
+POINT ObjectFootprintOrigin(const rpg::SceneObject& object) {
+    const rpg::SceneObjectDef* def = rpg::FindObjectDef(object.type);
+    const int width = def ? def->footprintWidth : 1;
+    const int height = def ? def->footprintHeight : 1;
+    return {
+        static_cast<LONG>(std::lround(object.pos.x / kTileSize - width * 0.5f)),
+        static_cast<LONG>(std::lround(object.pos.y / kTileSize - height)),
+    };
+}
+
+bool ObjectInsideTerritory(const rpg::SceneObject& object) {
+    const POINT tile = ObjectFootprintOrigin(object);
+    return rpg::TerritoryAt(g_game.scene, tile.x, tile.y);
+}
+
+int RealityLoad() {
+    int load = (static_cast<int>(g_game.npcs.size()) + PendingResidentCount()) * kResidentRealityLoad;
+    if (RealityAnchorExists()) load += kWorkbenchRealityLoad;
+    for (const rpg::SceneObject& object : g_game.scene.objects) {
+        if (object.type == "teleport_point" && ObjectInsideTerritory(object)) {
+            load += kTeleportRealityLoad;
+        }
+    }
+    return load;
+}
+
+bool CanAcceptWanderingShadow(std::wstring* reason = nullptr) {
+    if (!RealityAnchorExists()) {
+        if (reason) *reason = L"需要先建立现实锚点";
+        return false;
+    }
+    if (g_game.territoryStability < kMinimumRecruitmentStability) {
+        if (reason) *reason = L"领地稳定度低于 25，暂时无法收留居民";
+        return false;
+    }
+    if (RealityLoad() + kResidentRealityLoad > RealityCapacityLimit()) {
+        if (reason) *reason = L"现实承载力不足，无法固化新的居民";
+        return false;
+    }
+    return true;
+}
+
+int ItemFoodValue(const ItemStack& item) {
+    if (item.id.empty() || item.count <= 0) return 0;
+    const rpg::ItemDef* def = rpg::FindItemDef(item.id);
+    if (!def) return 0;
+    const auto property = def->properties.find("food");
+    return property == def->properties.end() ? 0 : std::max(0, static_cast<int>(std::lround(property->second)));
+}
+
+int StoredFoodPoints() {
+    int total = 0;
+    for (const ItemStack& item : g_game.anchorStorage) total += ItemFoodValue(item) * item.count;
+    return total;
+}
+
+int ConsumeAnchorFood(int required) {
+    int supplied = 0;
+    for (ItemStack& item : g_game.anchorStorage) {
+        const int value = ItemFoodValue(item);
+        while (value > 0 && item.count > 0 && supplied < required) {
+            --item.count;
+            supplied += value;
+        }
+        if (item.count == 0) item = {};
+        if (supplied >= required) break;
+    }
+    return std::min(supplied, required);
+}
+
+void SettleTerritoryDay() {
+    const int demand = static_cast<int>(g_game.npcs.size());
+    const int supplied = ConsumeAnchorFood(demand);
+    const int missing = demand - supplied;
+    const int overload = std::max(0, RealityLoad() - RealityCapacityLimit());
+    float change = missing == 0 ? 2.0f : -(8.0f + missing * 4.0f);
+    if (overload > 0) change -= 10.0f + overload * 0.5f;
+    g_game.territoryStability = Clamp(g_game.territoryStability + change, 0.0f, 100.0f);
+    ++g_game.territoryDaysPassed;
+
+    if (missing > 0) {
+        g_game.pickupNotice = L"领地缺粮：" + std::to_wstring(missing) + L" 名居民未获得食物，稳定度下降";
+        g_game.pickupNoticeTime = 3.0f;
+    } else if (overload > 0) {
+        g_game.pickupNotice = L"现实承载超限，稳定度正在下降";
+        g_game.pickupNoticeTime = 3.0f;
+    }
+    SaveCurrentGame();
+}
+
+void UpdateTerritorySystems(float dt) {
+    if (!RealityAnchorExists()) return;
+    g_game.territoryDayProgress += dt / kGameDaySeconds;
+    while (g_game.territoryDayProgress >= 1.0f) {
+        g_game.territoryDayProgress -= 1.0f;
+        SettleTerritoryDay();
+    }
 }
 
 bool CircleIntersectsTerritory(Vec2 pos, float radius) {
@@ -1023,6 +1517,7 @@ void UpdateWanderingShadows(float dt) {
         if (shadow.state == WandererState::Accepted && ActorProtectedByTerritory(shadow.pos)) {
             const std::wstring name = shadow.name;
             g_game.npcs.push_back({shadow.pos, {}, name, L"这里有了真实的温度。"});
+            g_game.npcs.back().workMap = g_currentScenePath.filename().wstring();
             g_game.pickupNotice = name + L" 已进入领地并化为实体";
             g_game.pickupNoticeTime = 2.0f;
             SaveCurrentGame();
@@ -1132,6 +1627,9 @@ int FollowerCount() {
     }));
 }
 
+const char* GatheringDropForObject(const rpg::SceneObject& object);
+void SaveCurrentScene();
+
 bool NpcHasAnyStone(const Npc& npc) {
     return std::any_of(npc.spiritStones.begin(), npc.spiritStones.end(), [](bool equipped) { return equipped; });
 }
@@ -1173,6 +1671,7 @@ RECT NpcContextButtonRect(int row) {
 int HitNpc(int screenX, int screenY) {
     const float scale = RenderScale();
     for (int i = static_cast<int>(g_game.npcs.size()) - 1; i >= 0; --i) {
+        if (!NpcInCurrentScene(g_game.npcs[i])) continue;
         const float x = g_game.npcs[i].pos.x * scale - g_game.camera.x;
         const float y = g_game.npcs[i].pos.y * scale - g_game.camera.y;
         const float dx = screenX - x;
@@ -1219,6 +1718,55 @@ void MoveNpcToward(int npcIndex, Vec2 target, float speed, float dt, bool keepPl
     npc.velocity = delta;
 }
 
+Vec2 ClampToFollowerLeash(Vec2 target) {
+    Vec2 offset{target.x - g_game.player.pos.x, target.y - g_game.player.pos.y};
+    const float distance = std::sqrt(offset.x * offset.x + offset.y * offset.y);
+    constexpr float maximumCenterDistance = kNpcCombatLeashDistance - kNpcRadius;
+    if (distance <= maximumCenterDistance || distance < 0.001f) return target;
+    const float scale = maximumCenterDistance / distance;
+    return {g_game.player.pos.x + offset.x * scale, g_game.player.pos.y + offset.y * scale};
+}
+
+void MoveFollowingNpcToward(int npcIndex, Vec2 target, float speed, float dt) {
+    MoveNpcToward(npcIndex, ClampToFollowerLeash(target), speed, dt);
+}
+
+Vec2 FollowerEvadeTarget(const Npc& npc, const Monster& monster) {
+    Vec2 away = Normalize({npc.pos.x - monster.pos.x, npc.pos.y - monster.pos.y});
+    if (std::fabs(away.x) + std::fabs(away.y) < 0.001f) away = Normalize({npc.pos.x - g_game.player.pos.x, npc.pos.y - g_game.player.pos.y});
+    if (std::fabs(away.x) + std::fabs(away.y) < 0.001f) away = {1.0f, 0.0f};
+    Vec2 target = ClampToFollowerLeash({npc.pos.x + away.x * 180.0f, npc.pos.y + away.y * 180.0f});
+    if (Distance(target, npc.pos) >= 24.0f) return target;
+
+    const Vec2 radial = Normalize({npc.pos.x - g_game.player.pos.x, npc.pos.y - g_game.player.pos.y});
+    const Vec2 tangent{-radial.y, radial.x};
+    const Vec2 clockwise = ClampToFollowerLeash({npc.pos.x + tangent.x * 180.0f, npc.pos.y + tangent.y * 180.0f});
+    const Vec2 counterClockwise = ClampToFollowerLeash({npc.pos.x - tangent.x * 180.0f, npc.pos.y - tangent.y * 180.0f});
+    return Distance(clockwise, monster.pos) >= Distance(counterClockwise, monster.pos) ? clockwise : counterClockwise;
+}
+
+bool NpcLowHealth(const Npc& npc) {
+    return npc.health <= kNpcRetreatHealth;
+}
+
+bool ActiveMonster(int index) {
+    return index >= 0 && index < static_cast<int>(g_game.monsters.size()) && g_game.monsters[index].alive;
+}
+
+int NearestMonster(Vec2 position, float maximumDistance) {
+    int target = -1;
+    float nearest = maximumDistance;
+    for (int i = 0; i < static_cast<int>(g_game.monsters.size()); ++i) {
+        if (!g_game.monsters[i].alive) continue;
+        const float distance = Distance(position, g_game.monsters[i].pos);
+        if (distance < nearest) {
+            nearest = distance;
+            target = i;
+        }
+    }
+    return target;
+}
+
 Vec2 FollowerSlotPosition(int followerSlot) {
     constexpr Vec2 offsets[kMaximumFollowers] = {
         {-125.0f, 0.0f},
@@ -1257,7 +1805,11 @@ void EnterFollowerCombat(int monsterIndex) {
         !g_game.monsters[monsterIndex].alive) return;
     g_game.activeCombatMonster = monsterIndex;
     for (Npc& npc : g_game.npcs) {
-        if (npc.following && npc.spiritStones[2] && !npc.shadowForm) npc.inCombat = true;
+        if (npc.following && npc.spiritStones[2] && !npc.shadowForm && !NpcLowHealth(npc)) {
+            npc.inCombat = true;
+            npc.evading = false;
+            npc.threatMonster = monsterIndex;
+        }
     }
 }
 
@@ -1275,7 +1827,7 @@ void UpdateMonsters(float dt) {
             : Distance(monster.pos, g_game.player.pos);
         for (int npcIndex = 0; npcIndex < static_cast<int>(g_game.npcs.size()); ++npcIndex) {
             const Npc& npc = g_game.npcs[npcIndex];
-            if (ActorProtectedByTerritory(npc.pos) || npc.shadowForm || !NpcHasAnyStone(npc)) continue;
+            if (!NpcInCurrentScene(npc) || ActorProtectedByTerritory(npc.pos) || npc.shadowForm || !NpcHasAnyStone(npc)) continue;
             const float distance = Distance(monster.pos, npc.pos);
             if (distance < targetDistance) {
                 targetDistance = distance;
@@ -1292,13 +1844,26 @@ void UpdateMonsters(float dt) {
             if (targetNpc >= 0) {
                 Npc& npc = g_game.npcs[targetNpc];
                 npc.health = std::max(0, npc.health - 8);
+                npc.threatMonster = i;
+                npc.evadeTime = 3.0f;
                 g_game.pickupNotice = L"畸变暗影击中了 " + npc.name;
                 if (npc.health == 0) {
                     g_game.pickupNotice = npc.name + L" 被畸变暗影吞噬了";
                     g_game.npcs.erase(g_game.npcs.begin() + targetNpc);
                     g_game.npcContextIndex = -1;
                     g_game.nearbyNpc = -1;
+                    g_game.anchorSelectedNpc = -1;
                     SaveCurrentGame();
+                } else if (npc.taskMode == NpcTaskMode::Gathering && NpcLowHealth(npc)) {
+                    npc.taskMode = NpcTaskMode::Returning;
+                    npc.gatheringObjectId.clear();
+                    npc.inCombat = false;
+                    npc.evading = false;
+                    g_game.pickupNotice = npc.name + L" 生命过低，正在返回领地";
+                } else if (npc.following) {
+                    g_game.activeCombatMonster = i;
+                    npc.inCombat = npc.spiritStones[2] && !NpcLowHealth(npc);
+                    npc.evading = !npc.inCombat;
                 }
             } else {
                 g_game.playerHealth = std::max(0, g_game.playerHealth - 8);
@@ -1326,15 +1891,253 @@ Vec2 NextTerritoryWanderTarget(const Npc& npc, int npcIndex) {
     return npc.pos;
 }
 
+int NpcCargoUsedSlots(const Npc& npc) {
+    return static_cast<int>(std::count_if(npc.cargo.begin(), npc.cargo.end(), [](const NpcCargoStack& stack) {
+        return !stack.id.empty() && stack.count > 0;
+    }));
+}
+
+bool StoreNpcCargo(Npc& npc, std::string_view id, int count) {
+    const rpg::ItemDef* def = rpg::FindItemDef(id);
+    const int maximum = def ? def->maxStack : 1;
+    for (NpcCargoStack& stack : npc.cargo) {
+        if (stack.id != id || stack.count >= maximum) continue;
+        const int moved = std::min(count, maximum - stack.count);
+        stack.count += moved;
+        count -= moved;
+        if (count == 0) return true;
+    }
+    for (NpcCargoStack& stack : npc.cargo) {
+        if (!stack.id.empty()) continue;
+        const int moved = std::min(count, maximum);
+        stack = {std::string(id), moved};
+        count -= moved;
+        if (count == 0) return true;
+    }
+    return false;
+}
+
+bool NpcCargoCanStore(const Npc& npc, std::string_view id, int count) {
+    Npc copy = npc;
+    return StoreNpcCargo(copy, id, count);
+}
+
+bool StoreAnchorItem(ItemStack& incoming) {
+    const rpg::ItemDef* def = rpg::FindItemDef(incoming.id);
+    const int maximum = def ? def->maxStack : 1;
+    for (ItemStack& stack : g_game.anchorStorage) {
+        if (stack.id != incoming.id || stack.count >= maximum) continue;
+        const int moved = std::min(incoming.count, maximum - stack.count);
+        stack.count += moved;
+        incoming.count -= moved;
+        if (incoming.count == 0) return true;
+    }
+    for (ItemStack& stack : g_game.anchorStorage) {
+        if (!stack.id.empty()) continue;
+        const int moved = std::min(incoming.count, maximum);
+        stack = incoming;
+        stack.count = moved;
+        incoming.count -= moved;
+        if (incoming.count == 0) return true;
+    }
+    return false;
+}
+
+bool UnloadNpcCargo(Npc& npc) {
+    bool emptied = true;
+    for (NpcCargoStack& cargo : npc.cargo) {
+        if (cargo.id.empty() || cargo.count <= 0) continue;
+        ItemStack incoming = MakeItemStack(cargo.id, cargo.count);
+        StoreAnchorItem(incoming);
+        cargo.count = incoming.count;
+        if (cargo.count <= 0) cargo = {};
+        else emptied = false;
+    }
+    return emptied;
+}
+
+bool WorldPositionExplored(Vec2 position) {
+    const std::wstring key = g_currentScenePath.filename().wstring();
+    const auto found = g_game.exploredTilesByScene.find(key);
+    if (found == g_game.exploredTilesByScene.end()) return false;
+    const int tx = static_cast<int>(position.x / kTileSize);
+    const int ty = static_cast<int>(position.y / kTileSize);
+    const int index = ty * g_game.scene.mapWidth + tx;
+    return tx >= 0 && ty >= 0 && tx < g_game.scene.mapWidth && ty < g_game.scene.mapHeight &&
+           index >= 0 && index < static_cast<int>(found->second.size()) && found->second[index] != 0;
+}
+
+bool NpcGatheringObjectMatches(const Npc& npc, const rpg::SceneObject& object) {
+    const char* drop = GatheringDropForObject(object);
+    return drop && (npc.gatheringTarget == "any" || npc.gatheringTarget == drop) &&
+           !ActorProtectedByTerritory({object.pos.x, object.pos.y}) &&
+           WorldPositionExplored({object.pos.x, object.pos.y});
+}
+
+int FindNpcGatheringObject(const Npc& npc) {
+    int best = -1;
+    float nearest = std::numeric_limits<float>::max();
+    for (int i = 0; i < static_cast<int>(g_game.scene.objects.size()); ++i) {
+        const rpg::SceneObject& object = g_game.scene.objects[i];
+        if (!NpcGatheringObjectMatches(npc, object)) continue;
+        const float distance = Distance(npc.pos, {object.pos.x, object.pos.y});
+        if (distance < nearest) {
+            nearest = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
+bool UpdateNpcWorkerCombat(int npcIndex, float dt) {
+    Npc& npc = g_game.npcs[npcIndex];
+    if (!npc.spiritStones[2] || NpcLowHealth(npc)) return false;
+    const int target = NearestMonster(npc.pos, 150.0f);
+    if (target < 0) return false;
+    Monster& monster = g_game.monsters[target];
+    const float nearest = Distance(npc.pos, monster.pos);
+    npc.inCombat = true;
+    npc.threatMonster = target;
+    if (nearest > 58.0f) {
+        MoveNpcToward(npcIndex, monster.pos, 150.0f, dt, false);
+    } else if (npc.attackCooldown <= 0.0f) {
+        monster.health -= 12;
+        KnockbackMonster(monster, npc.pos, 42.0f);
+        npc.attackCooldown = 0.65f;
+        if (monster.health <= 0) {
+            monster.health = 0;
+            monster.alive = false;
+            SpawnMonsterLoot(monster.pos);
+        }
+    }
+    return true;
+}
+
+bool UpdateNpcTask(int npcIndex, float dt) {
+    Npc& npc = g_game.npcs[npcIndex];
+    if (npc.taskMode == NpcTaskMode::Idle) return false;
+    if (!npc.workMap.empty() && npc.workMap != g_currentScenePath.filename().wstring()) return true;
+    npc.following = false;
+
+    if (npc.taskMode == NpcTaskMode::Returning) {
+        if (!ActorProtectedByTerritory(npc.pos)) {
+            MoveNpcToward(npcIndex, NearestTerritoryPosition(npc.pos), 96.0f, dt, false);
+            return true;
+        }
+        if (UnloadNpcCargo(npc)) {
+            npc.taskMode = NpcTaskMode::Idle;
+            npc.returningHome = false;
+            npc.gatheringObjectId.clear();
+            g_game.pickupNotice = npc.name + L" 已回到领地并卸下物资";
+            g_game.pickupNoticeTime = 2.0f;
+            SaveCurrentGame();
+        } else {
+            npc.workTimer += dt;
+            if (npc.workTimer >= 2.0f) {
+                npc.workTimer = 0.0f;
+                g_game.pickupNotice = L"锚点仓库已满，" + npc.name + L" 无法卸货";
+                g_game.pickupNoticeTime = 1.5f;
+            }
+        }
+        return true;
+    }
+
+    if (npc.taskMode == NpcTaskMode::Facility) {
+        const auto facility = std::find_if(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+            return object.id == npc.facilityId && ObjectInsideTerritory(object);
+        });
+        if (facility == g_game.scene.objects.end()) {
+            npc.taskMode = NpcTaskMode::Idle;
+            npc.facilityId.clear();
+            return true;
+        }
+        const Vec2 position{facility->pos.x, facility->pos.y};
+        if (Distance(npc.pos, position) > 70.0f) MoveNpcToward(npcIndex, position, 72.0f, dt, false);
+        else npc.workTimer += dt;
+        return true;
+    }
+
+    if (!npc.spiritStones[0]) {
+        npc.taskMode = NpcTaskMode::Returning;
+        npc.gatheringObjectId.clear();
+        g_game.pickupNotice = npc.name + L" 缺少采集石，正在返回领地";
+        g_game.pickupNoticeTime = 2.0f;
+        return true;
+    }
+    if (NpcLowHealth(npc)) {
+        npc.taskMode = NpcTaskMode::Returning;
+        npc.gatheringObjectId.clear();
+        npc.inCombat = false;
+        npc.evading = false;
+        g_game.pickupNotice = npc.name + L" 生命低于 30%，正在返回领地";
+        g_game.pickupNoticeTime = 2.0f;
+        return true;
+    }
+    if (UpdateNpcWorkerCombat(npcIndex, dt)) return true;
+    npc.inCombat = false;
+
+    int targetIndex = -1;
+    if (!npc.gatheringObjectId.empty()) {
+        for (int i = 0; i < static_cast<int>(g_game.scene.objects.size()); ++i) {
+            if (g_game.scene.objects[i].id == npc.gatheringObjectId && NpcGatheringObjectMatches(npc, g_game.scene.objects[i])) {
+                targetIndex = i;
+                break;
+            }
+        }
+    }
+    if (targetIndex < 0) {
+        targetIndex = FindNpcGatheringObject(npc);
+        npc.gatheringObjectId = targetIndex >= 0 ? g_game.scene.objects[targetIndex].id : "";
+        npc.workTimer = 0.0f;
+    }
+    if (targetIndex < 0) {
+        npc.taskMode = NpcTaskMode::Returning;
+        return true;
+    }
+
+    const rpg::SceneObject target = g_game.scene.objects[targetIndex];
+    const char* dropId = GatheringDropForObject(target);
+    const int count = target.type == "stone_round" ? 2 : (target.type == "exotic_tree_01" ? 5 : 3);
+    if (!NpcCargoCanStore(npc, dropId, count)) {
+        npc.taskMode = NpcTaskMode::Returning;
+        npc.gatheringObjectId.clear();
+        return true;
+    }
+    if (Distance(npc.pos, {target.pos.x, target.pos.y}) > 76.0f) {
+        MoveNpcToward(npcIndex, {target.pos.x, target.pos.y}, 92.0f, dt, false);
+        npc.workTimer = 0.0f;
+        return true;
+    }
+    npc.workTimer += dt;
+    if (npc.workTimer < 1.2f) return true;
+    npc.workTimer = 0.0f;
+    StoreNpcCargo(npc, dropId, count);
+    g_game.scene.objects.erase(
+        std::remove_if(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+            return object.id == target.id || (!target.groupId.empty() && object.groupId == target.groupId);
+        }),
+        g_game.scene.objects.end());
+    npc.gatheringObjectId.clear();
+    g_game.pickupNotice = npc.name + L" 采集了 " + MakeItemStack(dropId, 1).displayName + L" x" + std::to_wstring(count);
+    g_game.pickupNoticeTime = 1.2f;
+    SaveCurrentScene();
+    return true;
+}
+
 void UpdateNpcs(float dt) {
     int followerSlot = 0;
     for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
         Npc& npc = g_game.npcs[i];
+        if (!NpcInCurrentScene(npc)) continue;
         npc.attackCooldown = std::max(0.0f, npc.attackCooldown - dt);
+        npc.evadeTime = std::max(0.0f, npc.evadeTime - dt);
         npc.velocity = {};
+        npc.evading = false;
         const bool insideTerritory = ActorProtectedByTerritory(npc.pos);
         npc.shadowForm = !insideTerritory && !NpcHasAnyStone(npc);
         if (npc.shadowForm) npc.inCombat = false;
+
+        if (UpdateNpcTask(i, dt)) continue;
 
         if (!npc.following) {
             if (!insideTerritory) npc.returningHome = true;
@@ -1362,17 +2165,33 @@ void UpdateNpcs(float dt) {
 
         npc.returningHome = false;
 
-        if (npc.inCombat && npc.spiritStones[2] && !npc.shadowForm) {
-            const bool validTarget = g_game.activeCombatMonster >= 0 &&
-                g_game.activeCombatMonster < static_cast<int>(g_game.monsters.size()) &&
-                g_game.monsters[g_game.activeCombatMonster].alive;
+        if (!ActiveMonster(npc.threatMonster) ||
+            (ActiveMonster(npc.threatMonster) && Distance(npc.pos, g_game.monsters[npc.threatMonster].pos) > 350.0f)) {
+            npc.threatMonster = -1;
+        }
+        if (NpcLowHealth(npc) && npc.threatMonster < 0) npc.threatMonster = NearestMonster(npc.pos, 300.0f);
+        const bool hasThreat = ActiveMonster(npc.threatMonster);
+        const bool shouldEvade = hasThreat && (NpcLowHealth(npc) || (!npc.spiritStones[2] && npc.evadeTime > 0.0f));
+        if (shouldEvade) {
+            npc.inCombat = false;
+            npc.evading = true;
+            MoveFollowingNpcToward(i, FollowerEvadeTarget(npc, g_game.monsters[npc.threatMonster]), 185.0f, dt);
+            ++followerSlot;
+            continue;
+        }
+        npc.evading = false;
+
+        if (npc.inCombat && npc.spiritStones[2] && !npc.shadowForm && !NpcLowHealth(npc)) {
+            const int combatTarget = ActiveMonster(npc.threatMonster) ? npc.threatMonster : g_game.activeCombatMonster;
+            const bool validTarget = ActiveMonster(combatTarget);
             if (!validTarget || Distance(npc.pos, g_game.player.pos) > kNpcCombatLeashDistance) {
                 npc.inCombat = false;
             } else {
-                Monster& monster = g_game.monsters[g_game.activeCombatMonster];
+                npc.threatMonster = combatTarget;
+                Monster& monster = g_game.monsters[combatTarget];
                 const float targetDistance = Distance(npc.pos, monster.pos);
                 if (targetDistance > 58.0f) {
-                    MoveNpcToward(i, monster.pos, 165.0f, dt, false);
+                    MoveFollowingNpcToward(i, monster.pos, 165.0f, dt);
                 } else if (npc.attackCooldown <= 0.0f) {
                     monster.health -= 12;
                     KnockbackMonster(monster, npc.pos, 42.0f);
@@ -1380,6 +2199,7 @@ void UpdateNpcs(float dt) {
                     if (monster.health <= 0) {
                         monster.health = 0;
                         monster.alive = false;
+                        SpawnMonsterLoot(monster.pos);
                         g_game.activeCombatMonster = -1;
                         for (Npc& follower : g_game.npcs) follower.inCombat = false;
                         g_game.pickupNotice = L"畸变暗影已消散";
@@ -1394,7 +2214,7 @@ void UpdateNpcs(float dt) {
         const float playerDistance = Distance(npc.pos, g_game.player.pos);
         if (!npc.moving && (playerDistance > kNpcFollowStartDistance || playerDistance < kNpcMinimumDistance)) npc.moving = true;
         if (npc.moving && playerDistance <= kNpcFollowStopDistance) npc.moving = false;
-        if (npc.moving) MoveNpcToward(i, FollowerSlotPosition(followerSlot), 145.0f, dt);
+        if (npc.moving) MoveFollowingNpcToward(i, FollowerSlotPosition(followerSlot), 145.0f, dt);
         ++followerSlot;
     }
 }
@@ -1402,6 +2222,7 @@ void UpdateNpcs(float dt) {
 void UpdateNearbyNpc() {
     g_game.nearbyNpc = -1;
     for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
+        if (!NpcInCurrentScene(g_game.npcs[i])) continue;
         if (Distance(g_game.player.pos, g_game.npcs[i].pos) < 72.0f) {
             g_game.nearbyNpc = i;
             return;
@@ -1410,8 +2231,14 @@ void UpdateNearbyNpc() {
 }
 
 void UpdateGame(float dt) {
+    if (UpdateDeathSequence(dt)) return;
     g_game.teleportCooldown = std::max(0.0f, g_game.teleportCooldown - dt);
     g_game.pickupNoticeTime = std::max(0.0f, g_game.pickupNoticeTime - dt);
+    UpdateTerritorySystems(dt);
+    if (g_game.explorationDirty) {
+        g_game.explorationSaveTimer += dt;
+        if (g_game.explorationSaveTimer >= 5.0f) SaveCurrentGame();
+    }
     if (g_console.open) {
         g_game.player.vel = {};
         g_game.player.animTime = 0.0f;
@@ -1478,22 +2305,7 @@ void UpdateGame(float dt) {
         g_game.player.animTime = 0.0f;
     }
     TryMove(g_game.player, {g_game.player.vel.x * dt, g_game.player.vel.y * dt});
-    {
-        const std::wstring sceneKey = g_currentScenePath.filename().wstring();
-        std::vector<std::uint8_t>& explored = g_game.exploredTilesByScene[sceneKey];
-        const int tileCount = g_game.scene.mapWidth * g_game.scene.mapHeight;
-        if (static_cast<int>(explored.size()) != tileCount) explored.assign(tileCount, 0);
-        const int centerX = std::clamp(static_cast<int>(g_game.player.pos.x / kTileSize), 0, g_game.scene.mapWidth - 1);
-        const int centerY = std::clamp(static_cast<int>(g_game.player.pos.y / kTileSize), 0, g_game.scene.mapHeight - 1);
-        constexpr int kRevealRadius = 3;
-        for (int ty = std::max(0, centerY - kRevealRadius); ty <= std::min(g_game.scene.mapHeight - 1, centerY + kRevealRadius); ++ty) {
-            for (int tx = std::max(0, centerX - kRevealRadius); tx <= std::min(g_game.scene.mapWidth - 1, centerX + kRevealRadius); ++tx) {
-                const int dx = tx - centerX;
-                const int dy = ty - centerY;
-                if (dx * dx + dy * dy <= kRevealRadius * kRevealRadius) explored[ty * g_game.scene.mapWidth + tx] = 1;
-            }
-        }
-    }
+    RevealCurrentSceneAroundPlayer();
     UpdateMonsters(dt);
     UpdateNpcs(dt);
     UpdateWanderingShadows(dt);
@@ -1757,6 +2569,35 @@ void DrawWorldMap(HDC hdc, const RECT& client) {
     RestoreDC(hdc, -1);
 }
 
+void DrawWorldFog(HDC hdc, const RECT& client) {
+    const std::wstring sceneKey = g_currentScenePath.filename().wstring();
+    const auto exploredIt = g_game.exploredTilesByScene.find(sceneKey);
+    const std::vector<std::uint8_t>* explored = exploredIt == g_game.exploredTilesByScene.end()
+        ? nullptr
+        : &exploredIt->second;
+    const float scale = RenderScale();
+    const float tilePixels = kTileSize * scale;
+    const int left = std::clamp(static_cast<int>(std::floor(g_game.camera.x / tilePixels)), 0, g_game.scene.mapWidth - 1);
+    const int top = std::clamp(static_cast<int>(std::floor(g_game.camera.y / tilePixels)), 0, g_game.scene.mapHeight - 1);
+    const int right = std::clamp(static_cast<int>(std::ceil((g_game.camera.x + client.right) / tilePixels)), 0, g_game.scene.mapWidth - 1);
+    const int bottom = std::clamp(static_cast<int>(std::ceil((g_game.camera.y + client.bottom) / tilePixels)), 0, g_game.scene.mapHeight - 1);
+    for (int ty = top; ty <= bottom; ++ty) {
+        for (int tx = left; tx <= right; ++tx) {
+            const int index = ty * g_game.scene.mapWidth + tx;
+            const bool revealed = explored && index >= 0 && index < static_cast<int>(explored->size()) && (*explored)[index] != 0;
+            if (revealed) continue;
+            const RECT tile{
+                static_cast<LONG>(std::floor(tx * tilePixels - g_game.camera.x)),
+                static_cast<LONG>(std::floor(ty * tilePixels - g_game.camera.y)),
+                static_cast<LONG>(std::ceil((tx + 1) * tilePixels - g_game.camera.x)) + 1,
+                static_cast<LONG>(std::ceil((ty + 1) * tilePixels - g_game.camera.y)) + 1,
+            };
+            const int shade = ((tx * 17 + ty * 31) & 3) * 2;
+            FillRectColor(hdc, tile, RGB(13 + shade, 17 + shade, 19 + shade));
+        }
+    }
+}
+
 void DrawDebugCircle(HDC hdc, Vec2 center, float radius, COLORREF color) {
     HPEN pen = CreatePen(PS_SOLID, 2, color);
     HGDIOBJ oldPen = SelectObject(hdc, pen);
@@ -1799,7 +2640,7 @@ void DrawDebugCollisionOverlay(HDC hdc) {
     }
     DrawDebugCircle(hdc, g_game.player.pos, kPlayerRadius, RGB(80, 220, 255));
     for (const Npc& npc : g_game.npcs) {
-        if (!npc.shadowForm) DrawDebugCircle(hdc, npc.pos, kNpcRadius, RGB(255, 224, 82));
+        if (NpcInCurrentScene(npc) && !npc.shadowForm) DrawDebugCircle(hdc, npc.pos, kNpcRadius, RGB(255, 224, 82));
     }
     for (const Monster& monster : g_game.monsters) {
         if (monster.alive) DrawDebugCircle(hdc, monster.pos, 16.0f, RGB(225, 102, 238));
@@ -1848,10 +2689,14 @@ void DrawShadowDialog(HDC hdc, const RECT& client) {
     DrawTextLine(hdc, L"一个即将消散的影子在领地外徘徊，等待你的决定。", dialog.left + 22, dialog.top + 50, RGB(196, 202, 205));
     const RECT accept = ShadowAcceptButton(dialog);
     const RECT expel = ShadowExpelButton(dialog);
-    FillRectColor(hdc, accept, RGB(54, 94, 70));
+    std::wstring unavailableReason;
+    const bool canAccept = CanAcceptWanderingShadow(&unavailableReason);
+    FillRectColor(hdc, accept, canAccept ? RGB(54, 94, 70) : RGB(62, 66, 65));
     FillRectColor(hdc, expel, RGB(91, 58, 61));
-    DrawTextLine(hdc, L"收留", accept.left + 38, accept.top + 9, RGB(238, 244, 238));
+    DrawTextLine(hdc, L"收留", accept.left + 38, accept.top + 9,
+                 canAccept ? RGB(238, 244, 238) : RGB(151, 157, 153));
     DrawTextLine(hdc, L"驱逐", expel.left + 38, expel.top + 9, RGB(244, 236, 236));
+    if (!canAccept) DrawTextLine(hdc, unavailableReason, dialog.left + 22, dialog.top + 74, RGB(222, 151, 134));
 }
 
 void DrawBuildingPlacementPreview(HDC hdc) {
@@ -2100,6 +2945,11 @@ bool BuildingCanBePlaced(const std::string& objectType, int tx, int ty, std::wst
         if (reason) *reason = L"锚点需要完整的 7x7 空间";
         return false;
     }
+    if (objectType == "teleport_point" && rpg::TerritoryAt(g_game.scene, tx, ty) &&
+        RealityLoad() + kTeleportRealityLoad > RealityCapacityLimit()) {
+        if (reason) *reason = L"现实承载力不足，无法启用新的传送点";
+        return false;
+    }
     const rpg::Vec2 position = BuildingAnchorPosition(objectType, tx, ty);
     rpg::SceneObject candidate = rpg::MakeObject(objectType, position, 0);
     const float collisionRadius = std::max(def->collision.w, def->collision.h) * 0.5f;
@@ -2118,7 +2968,7 @@ bool BuildingCanBePlaced(const std::string& objectType, int tx, int ty, std::wst
         return false;
     }
     for (const Npc& npc : g_game.npcs) {
-    if (!npc.shadowForm && PlacementActorCollision(candidate, npc.pos, kNpcRadius)) {
+    if (NpcInCurrentScene(npc) && !npc.shadowForm && PlacementActorCollision(candidate, npc.pos, kNpcRadius)) {
             if (reason) *reason = L"建筑与 NPC 碰撞";
             return false;
         }
@@ -2187,26 +3037,60 @@ bool ExpandTerritoryRect(POINT first, POINT second) {
     const int right = std::clamp<int>(std::max(first.x, second.x), 0, g_game.scene.mapWidth - 1);
     const int top = std::clamp<int>(std::min(first.y, second.y), 0, g_game.scene.mapHeight - 1);
     const int bottom = std::clamp<int>(std::max(first.y, second.y), 0, g_game.scene.mapHeight - 1);
-    bool changed = false;
+    if (g_game.territoryStability < kMinimumRecruitmentStability) {
+        g_game.pickupNotice = L"领地稳定度低于 25，暂时无法扩张";
+        g_game.pickupNoticeTime = 2.0f;
+        return false;
+    }
+    std::vector<std::uint8_t> expanded = g_game.scene.territory;
+    int added = 0;
     bool progress = true;
     while (progress) {
         progress = false;
         for (int y = top; y <= bottom; ++y) {
             for (int x = left; x <= right; ++x) {
-                if (!rpg::TerritoryAt(g_game.scene, x, y) && HasTerritoryNeighbor(x, y)) {
-                    rpg::SetTerritory(g_game.scene, x, y, true);
-                    changed = true;
-                    progress = true;
-                }
+                const int index = y * g_game.scene.mapWidth + x;
+                if (expanded[index]) continue;
+                const auto claimed = [&](int nx, int ny) {
+                    return nx >= 0 && ny >= 0 && nx < g_game.scene.mapWidth && ny < g_game.scene.mapHeight &&
+                           expanded[ny * g_game.scene.mapWidth + nx] != 0;
+                };
+                if (!claimed(x - 1, y) && !claimed(x + 1, y) && !claimed(x, y - 1) && !claimed(x, y + 1)) continue;
+                expanded[index] = 1;
+                ++added;
+                progress = true;
             }
         }
     }
-    g_game.pickupNotice = changed ? L"领地已扩张" : L"飞地无效：新区域必须连接现有领地";
-    g_game.pickupNoticeTime = 1.6f;
-    if (changed) {
-        rpg::InvalidateTerritoryRenderCache();
-        SaveCurrentScene();
+    if (added == 0) {
+        g_game.pickupNotice = L"飞地无效：新区域必须连接现有领地";
+        g_game.pickupNoticeTime = 1.6f;
+        return false;
     }
+    if (TerritoryTileCount() + added > TerritoryAreaLimit()) {
+        g_game.pickupNotice = L"领地面积已达上限（" + std::to_wstring(TerritoryAreaLimit()) + L" 格）";
+        g_game.pickupNoticeTime = 2.0f;
+        return false;
+    }
+    int projectedLoad = (static_cast<int>(g_game.npcs.size()) + PendingResidentCount()) * kResidentRealityLoad +
+                        (RealityAnchorExists() ? kWorkbenchRealityLoad : 0);
+    for (const rpg::SceneObject& object : g_game.scene.objects) {
+        if (object.type != "teleport_point") continue;
+        const POINT tile = ObjectFootprintOrigin(object);
+        if (tile.x >= 0 && tile.y >= 0 && tile.x < g_game.scene.mapWidth && tile.y < g_game.scene.mapHeight &&
+            expanded[tile.y * g_game.scene.mapWidth + tile.x]) projectedLoad += kTeleportRealityLoad;
+    }
+    if (projectedLoad > RealityCapacityLimit()) {
+        g_game.pickupNotice = L"扩张会启用传送点并超过现实承载上限";
+        g_game.pickupNoticeTime = 2.0f;
+        return false;
+    }
+    g_game.scene.territory = std::move(expanded);
+    const bool changed = true;
+    g_game.pickupNotice = L"领地已扩张 " + std::to_wstring(added) + L" 格";
+    g_game.pickupNoticeTime = 1.6f;
+    rpg::InvalidateTerritoryRenderCache();
+    SaveCurrentScene();
     return changed;
 }
 
@@ -2368,15 +3252,15 @@ void DrawSpiritMenu(HDC hdc, const InventoryLayout& layout) {
     const int radius = std::max(1, static_cast<int>(std::round(72.0f * amount)));
     constexpr COLORREF colors[] = {RGB(72, 142, 91), RGB(197, 157, 65), RGB(169, 66, 68)};
     constexpr const wchar_t* labels[] = {L"采集", L"建造", L"战斗"};
-    constexpr const char* ids[] = {kGatheringStoneId, kBuildingStoneId, kCombatStoneId};
     constexpr float starts[] = {210.0f, 330.0f, 90.0f};
     constexpr double pi = 3.14159265358979323846;
 
     for (int i = 0; i < 3; ++i) {
         const bool available = !g_game.inventory.spiritSlots[i].id.empty();
         HBRUSH brush = CreateSolidBrush(available ? colors[i] : RGB(48, 53, 52));
-        HPEN pen = CreatePen(PS_SOLID, g_game.inventory.heldItem.id == ids[i] ? 4 : 2,
-            g_game.inventory.heldItem.id == ids[i] ? RGB(255, 240, 142) : RGB(222, 226, 210));
+        const bool active = available && g_game.inventory.heldItem.id == g_game.inventory.spiritSlots[i].id;
+        HPEN pen = CreatePen(PS_SOLID, active ? 4 : 2,
+            active ? RGB(255, 240, 142) : RGB(222, 226, 210));
         HGDIOBJ oldBrush = SelectObject(hdc, brush);
         HGDIOBJ oldPen = SelectObject(hdc, pen);
         const double start = starts[i] * pi / 180.0;
@@ -2424,22 +3308,22 @@ bool PointInSpiritMenu(const RECT& client, int x, int y) {
 }
 
 void SelectSpiritStone(int index) {
-    constexpr const char* ids[] = {kGatheringStoneId, kBuildingStoneId, kCombatStoneId};
     if (index < 0 || index >= 3) return;
-    if (g_game.inventory.spiritSlots[index].id != ids[index]) {
+    const ItemStack& equipped = g_game.inventory.spiritSlots[index];
+    if (equipped.id.empty() || SpiritSkillIndex(equipped.id) != index) {
         g_game.pickupNotice = L"对应灵石槽为空";
         g_game.pickupNoticeTime = 1.3f;
         return;
     }
-    if (g_game.inventory.heldItem.id == ids[index]) {
+    if (g_game.inventory.heldItem.id == equipped.id) {
         g_game.inventory.heldItem = {};
         g_game.pickupNotice = L"已取消灵石技能";
     } else {
-        g_game.inventory.heldItem = g_game.inventory.spiritSlots[index];
-        g_game.pickupNotice = g_game.inventory.heldItem.displayName + L"已启用";
+        g_game.inventory.heldItem = equipped;
+        g_game.pickupNotice = g_game.inventory.heldItem.displayName + L" 已启用";
     }
     g_game.pickupNoticeTime = 1.5f;
-    if (g_game.inventory.heldItem.id != kBuildingStoneId) {
+    if (!HeldSpiritSkill(1)) {
         g_game.inventory.placingAnchor = false;
         g_game.inventory.selectingTerritory = false;
     }
@@ -2576,9 +3460,8 @@ void MoveInventoryItem(int sourceIndex, int targetIndex) {
     if (!source || !target || source->id.empty()) {
         return;
     }
-    constexpr const char* stoneIds[] = {kGatheringStoneId, kBuildingStoneId, kCombatStoneId};
     const bool targetIsSpirit = targetIndex >= kInventorySlotCount && targetIndex < kInventorySlotCount + kSpiritSlotCount;
-    if (targetIsSpirit && source->id != stoneIds[targetIndex - kInventorySlotCount]) {
+    if (targetIsSpirit && SpiritSkillIndex(source->id) != targetIndex - kInventorySlotCount) {
         g_game.pickupNotice = L"该灵石只能放入对应槽位";
         g_game.pickupNoticeTime = 1.3f;
         return;
@@ -2678,13 +3561,49 @@ RECT AnchorPanelRect(const RECT& client) {
     return {18, 104, client.right - 18, client.bottom - 18};
 }
 
+bool AnchorStorageAvailable() {
+    return ActorProtectedByTerritory(g_game.player.pos);
+}
+
+RECT AnchorTabRect(const RECT& panel, AnchorPanelTab tab) {
+    const bool storageAvailable = AnchorStorageAvailable();
+    int visibleIndex = 0;
+    if (tab == AnchorPanelTab::Storage) {
+        if (!storageAvailable) return {};
+    } else if (tab == AnchorPanelTab::Workbench) {
+        if (!storageAvailable) return {};
+        visibleIndex = 1;
+    } else if (tab == AnchorPanelTab::Residents) {
+        visibleIndex = storageAvailable ? 2 : 0;
+    } else if (tab == AnchorPanelTab::Work) {
+        visibleIndex = storageAvailable ? 3 : 1;
+    } else {
+        visibleIndex = storageAvailable ? 4 : 2;
+    }
+    constexpr int width = 126;
+    constexpr int gap = 5;
+    const int left = panel.left + 166 + visibleIndex * (width + gap);
+    return {left, panel.top + 12, left + width, panel.top + 46};
+}
+
+int HitAnchorTab(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    for (const AnchorPanelTab tab : {AnchorPanelTab::Storage, AnchorPanelTab::Workbench,
+                                     AnchorPanelTab::Residents, AnchorPanelTab::Work, AnchorPanelTab::Technology}) {
+        const RECT rect = AnchorTabRect(panel, tab);
+        if (rect.right > rect.left && PtInRect(&rect, POINT{x, y})) return static_cast<int>(tab);
+    }
+    return -1;
+}
+
 RECT AnchorStorageSlotRect(const RECT& panel, int index) {
     constexpr int cell = 34;
     constexpr int gap = 4;
     const int column = index % 10;
     const int row = index / 10;
     const int left = panel.left + 20 + column * (cell + gap);
-    const int top = panel.top + 64 + row * (cell + gap);
+    const int top = panel.top + 96 + row * (cell + gap);
     return {left, top, left + cell, top + cell};
 }
 
@@ -2694,18 +3613,156 @@ RECT AnchorInventorySlotRect(const RECT& panel, int index) {
     const int column = index % 10;
     const int row = index / 10;
     const int left = panel.left + 422 + column * (cell + gap);
-    const int top = panel.top + 64 + row * (cell + gap);
+    const int top = panel.top + 96 + row * (cell + gap);
     return {left, top, left + cell, top + cell};
 }
 
 RECT AnchorNpcRowRect(const RECT& panel, int index) {
-    const int top = panel.top + 252 + index * 31;
-    return {panel.left + 422, top, panel.right - 18, top + 27};
+    const int top = panel.top + 94 + index * 31;
+    return {panel.left + 20, top, panel.left + 302, top + 27};
 }
 
 RECT AnchorStoneButtonRect(const RECT& panel, int index) {
-    const int left = panel.left + 422 + index * 126;
-    return {left, panel.bottom - 48, left + 118, panel.bottom - 20};
+    const int left = panel.left + 342 + index * 156;
+    return {left, panel.top + 300, left + 144, panel.top + 334};
+}
+
+RECT AnchorBlueprintRect(const RECT& panel, int index) {
+    constexpr int width = 190;
+    constexpr int height = 72;
+    if (index == 0) return {panel.left + 60, panel.top + 112, panel.left + 60 + width, panel.top + 112 + height};
+    const int left = panel.left + 360;
+    const int top = panel.top + 76 + (index - 1) * 118;
+    return {left, top, left + width, top + height};
+}
+
+struct AnchorBlueprintDef {
+    const char* id;
+    const wchar_t* name;
+    const wchar_t* description;
+    const char* dependency;
+};
+
+constexpr std::array<AnchorBlueprintDef, 3> kAnchorBlueprints{{
+    {"territory_anchor", L"现实锚点", L"固化领地并开启锚点功能", nullptr},
+    {"cottage_4x3", L"4x3 小屋", L"解锁居民小屋建筑蓝图", "territory_anchor"},
+    {"teleport_point", L"传送点", L"解锁场景传送点建筑蓝图", "territory_anchor"},
+}};
+
+bool BlueprintUnlocked(const char* id);
+
+struct WorkbenchRecipeDef {
+    struct Ingredient {
+        const char* id;
+        const wchar_t* name;
+        int count;
+    };
+
+    const char* outputId;
+    const wchar_t* name;
+    const char* requiredBlueprint;
+    std::array<Ingredient, 4> ingredients;
+    int ingredientCount;
+};
+
+constexpr std::array<WorkbenchRecipeDef, 12> kWorkbenchRecipes{{
+    {"gathering_stone", L"采集石I", nullptr, {{{"emerald", L"绿宝石", 1}, {"stone", L"石头", 1}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"gathering_stone_ii", L"采集石II", nullptr, {{{"emerald", L"绿宝石", 1}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"gathering_stone_iii", L"采集石III", nullptr, {{{"emerald", L"绿宝石", 2}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {"anchor_fragment", L"锚点碎片", 1}}}, 4},
+    {"combat_stone", L"战斗石I", nullptr, {{{"ruby", L"红宝石", 1}, {"stone", L"石头", 1}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"combat_stone_ii", L"战斗石II", nullptr, {{{"ruby", L"红宝石", 1}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"combat_stone_iii", L"战斗石III", nullptr, {{{"ruby", L"红宝石", 2}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {"anchor_fragment", L"锚点碎片", 1}}}, 4},
+    {"building_stone", L"建造石I", nullptr, {{{"topaz", L"黄宝石", 1}, {"stone", L"石头", 1}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"building_stone_ii", L"建造石II", nullptr, {{{"topaz", L"黄宝石", 1}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"building_stone_iii", L"建造石III", nullptr, {{{"topaz", L"黄宝石", 2}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {"anchor_fragment", L"锚点碎片", 1}}}, 4},
+    {"small_potion", L"治疗药水", nullptr, {{{"healing_herb", L"草药", 1}, {"fodder", L"草料", 1}, {"berry", L"浆果", 1}, {nullptr, nullptr, 0}}}, 3},
+    {"cottage_4x3", L"4x3 小屋", "cottage_4x3", {{{"wood", L"木头", 30}, {"iron_ore", L"铁矿石", 8}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"teleport_point", L"传送点", "teleport_point", {{{"iron_ore", L"铁矿石", 12}, {"gold_coin", L"金币", 20}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+}};
+
+RECT WorkbenchRecipeRect(const RECT& panel, int index) {
+    const int top = panel.top + 96 + index * 31;
+    return {panel.left + 28, top, panel.left + 304, top + 27};
+}
+
+RECT WorkbenchCraftButtonRect(const RECT& panel) {
+    return {panel.left + 360, panel.bottom - 78, panel.left + 520, panel.bottom - 34};
+}
+
+int StoredItemCount(std::string_view id) {
+    int count = 0;
+    for (const ItemStack& item : g_game.inventory.slots) if (item.id == id) count += item.count;
+    for (const ItemStack& item : g_game.anchorStorage) if (item.id == id) count += item.count;
+    return count;
+}
+
+bool CanStoreWorkbenchOutput(std::string_view id) {
+    const rpg::ItemDef* def = rpg::FindItemDef(id);
+    if (!def) return false;
+    for (const ItemStack& item : g_game.inventory.slots) {
+        if (item.id.empty() || (item.id == id && item.count < def->maxStack)) return true;
+    }
+    return false;
+}
+
+void ConsumeStoredItem(std::string_view id, int count) {
+    const auto consume = [id, &count](auto& slots) {
+        for (ItemStack& item : slots) {
+            if (count <= 0) break;
+            if (item.id != id || item.count <= 0) continue;
+            const int removed = std::min(count, item.count);
+            item.count -= removed;
+            count -= removed;
+            if (item.count == 0) item = {};
+        }
+    };
+    consume(g_game.inventory.slots);
+    consume(g_game.anchorStorage);
+}
+
+bool WorkbenchRecipeCraftable(const WorkbenchRecipeDef& recipe) {
+    if (recipe.requiredBlueprint && !BlueprintUnlocked(recipe.requiredBlueprint)) return false;
+    for (int i = 0; i < recipe.ingredientCount; ++i) {
+        if (StoredItemCount(recipe.ingredients[i].id) < recipe.ingredients[i].count) return false;
+    }
+    return CanStoreWorkbenchOutput(recipe.outputId);
+}
+
+int HitWorkbenchRecipe(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Workbench ||
+        !AnchorStorageAvailable()) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    const RECT button = WorkbenchCraftButtonRect(panel);
+    return PtInRect(&button, POINT{x, y}) ? g_game.anchorSelectedWorkbenchRecipe : -1;
+}
+
+int HitWorkbenchRecipeRow(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Workbench ||
+        !AnchorStorageAvailable()) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    for (int i = 0; i < static_cast<int>(kWorkbenchRecipes.size()); ++i) {
+        const RECT row = WorkbenchRecipeRect(panel, i);
+        if (PtInRect(&row, POINT{x, y})) return i;
+    }
+    return -1;
+}
+
+bool BlueprintUnlocked(const char* id) {
+    return id && g_game.unlockedBlueprints.count(id) != 0;
+}
+
+bool BlueprintAvailable(const AnchorBlueprintDef& blueprint) {
+    return !blueprint.dependency || BlueprintUnlocked(blueprint.dependency);
+}
+
+int HitAnchorBlueprint(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Technology) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    for (int i = 0; i < static_cast<int>(kAnchorBlueprints.size()); ++i) {
+        const RECT node = AnchorBlueprintRect(panel, i);
+        if (PtInRect(&node, POINT{x, y})) return i;
+    }
+    return -1;
 }
 
 bool PointInAnchorPanel(const RECT& client, int x, int y) {
@@ -2714,7 +3771,7 @@ bool PointInAnchorPanel(const RECT& client, int x, int y) {
 }
 
 int HitAnchorStorageSlot(const RECT& client, int x, int y) {
-    if (!g_game.anchorPanelOpen) return -1;
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Storage || !AnchorStorageAvailable()) return -1;
     const RECT panel = AnchorPanelRect(client);
     for (int i = 0; i < kAnchorStorageSlotCount; ++i) {
         const RECT slot = AnchorStorageSlotRect(panel, i);
@@ -2724,7 +3781,7 @@ int HitAnchorStorageSlot(const RECT& client, int x, int y) {
 }
 
 int HitAnchorInventorySlot(const RECT& client, int x, int y) {
-    if (!g_game.anchorPanelOpen) return -1;
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Storage || !AnchorStorageAvailable()) return -1;
     const RECT panel = AnchorPanelRect(client);
     for (int i = 0; i < kInventorySlotCount; ++i) {
         const RECT slot = AnchorInventorySlotRect(panel, i);
@@ -2734,7 +3791,8 @@ int HitAnchorInventorySlot(const RECT& client, int x, int y) {
 }
 
 int HitAnchorNpc(const RECT& client, int x, int y) {
-    if (!g_game.anchorPanelOpen) return -1;
+    if (!g_game.anchorPanelOpen ||
+        (g_game.anchorPanelTab != AnchorPanelTab::Residents && g_game.anchorPanelTab != AnchorPanelTab::Work)) return -1;
     const RECT panel = AnchorPanelRect(client);
     for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
         const RECT row = AnchorNpcRowRect(panel, i);
@@ -2744,14 +3802,111 @@ int HitAnchorNpc(const RECT& client, int x, int y) {
 }
 
 int HitAnchorNpcStone(const RECT& client, int x, int y) {
-    if (!g_game.anchorPanelOpen || g_game.anchorSelectedNpc < 0 ||
+    if (!g_game.anchorPanelOpen ||
+        (g_game.anchorPanelTab != AnchorPanelTab::Residents && g_game.anchorPanelTab != AnchorPanelTab::Work) ||
+        g_game.anchorSelectedNpc < 0 ||
         g_game.anchorSelectedNpc >= static_cast<int>(g_game.npcs.size())) return -1;
     const RECT panel = AnchorPanelRect(client);
     for (int i = 0; i < kSpiritSlotCount; ++i) {
-        const RECT button = AnchorStoneButtonRect(panel, i);
+        const RECT button = g_game.anchorPanelTab == AnchorPanelTab::Work
+            ? RECT{panel.left + 342 + i * 156, panel.top + 340, panel.left + 342 + i * 156 + 144, panel.top + 374}
+            : AnchorStoneButtonRect(panel, i);
         if (PtInRect(&button, POINT{x, y})) return i;
     }
     return -1;
+}
+
+struct NpcFacilityJob {
+    std::string objectId;
+    std::wstring name;
+};
+
+std::vector<NpcFacilityJob> AvailableNpcFacilityJobs() {
+    std::vector<NpcFacilityJob> jobs;
+    for (const rpg::SceneObject& object : g_game.scene.objects) {
+        if (!ObjectInsideTerritory(object)) continue;
+        if (object.type == "territory_anchor") jobs.push_back({object.id, L"锚点工作台助手"});
+        else if (object.type.find("furnace") != std::string::npos) jobs.push_back({object.id, L"熔炉工"});
+        else if (object.type.find("farm") != std::string::npos) jobs.push_back({object.id, L"农田管理员"});
+    }
+    return jobs;
+}
+
+RECT NpcWorkFacilityRect(const RECT& panel, int index) {
+    const int top = panel.top + 136 + index * 34;
+    return {panel.left + 342, top, panel.left + 742, top + 29};
+}
+
+RECT NpcGatherTargetRect(const RECT& panel, int index) {
+    const int left = panel.left + 342 + index * 108;
+    return {left, panel.top + 222, left + 100, panel.top + 254};
+}
+
+RECT NpcStartGatheringRect(const RECT& panel) {
+    return {panel.left + 342, panel.top + 270, panel.left + 492, panel.top + 306};
+}
+
+RECT NpcReturnHomeRect(const RECT& panel) {
+    return {panel.left + 504, panel.top + 270, panel.left + 654, panel.top + 306};
+}
+
+RECT NpcStopWorkRect(const RECT& panel) {
+    return {panel.left + 666, panel.top + 270, panel.left + 816, panel.top + 306};
+}
+
+RECT NpcWorkCargoRect(const RECT& panel, int index) {
+    constexpr int cell = 34;
+    constexpr int gap = 4;
+    const int column = index % 5;
+    const int row = index / 5;
+    const int left = panel.left + 556 + column * (cell + gap);
+    const int top = panel.top + 408 + row * (cell + gap);
+    return {left, top, left + cell, top + cell};
+}
+
+int HitNpcWorkFacility(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Work) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    const auto jobs = AvailableNpcFacilityJobs();
+    for (int i = 0; i < static_cast<int>(jobs.size()); ++i) {
+        const RECT row = NpcWorkFacilityRect(panel, i);
+        if (PtInRect(&row, POINT{x, y})) return i;
+    }
+    return -1;
+}
+
+int HitNpcGatherTarget(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Work) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    for (int i = 0; i < 4; ++i) {
+        const RECT button = NpcGatherTargetRect(panel, i);
+        if (PtInRect(&button, POINT{x, y})) return i;
+    }
+    return -1;
+}
+
+enum class NpcWorkAction { None, StartGathering, ReturnHome, Stop };
+
+NpcWorkAction HitNpcWorkAction(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Work) return NpcWorkAction::None;
+    const RECT panel = AnchorPanelRect(client);
+    const POINT point{x, y};
+    const RECT start = NpcStartGatheringRect(panel);
+    const RECT home = NpcReturnHomeRect(panel);
+    const RECT stop = NpcStopWorkRect(panel);
+    if (PtInRect(&start, point)) return NpcWorkAction::StartGathering;
+    if (PtInRect(&home, point)) return NpcWorkAction::ReturnHome;
+    if (PtInRect(&stop, point)) return NpcWorkAction::Stop;
+    return NpcWorkAction::None;
+}
+
+std::wstring NpcTaskLabel(const Npc& npc) {
+    switch (npc.taskMode) {
+    case NpcTaskMode::Facility: return L"设施工作";
+    case NpcTaskMode::Gathering: return npc.inCombat ? L"外出自卫" : L"外出采集";
+    case NpcTaskMode::Returning: return L"返回领地";
+    default: return npc.following ? L"跟随" : L"空闲";
+    }
 }
 
 void DrawAnchorButton(HDC hdc) {
@@ -2795,8 +3950,31 @@ void DrawAnchorButton(HDC hdc) {
     DeleteObject(iconPen);
 }
 
+void DrawTerritoryStatus(HDC hdc) {
+    if (!RealityAnchorExists()) return;
+    const int residents = static_cast<int>(g_game.npcs.size());
+    const int food = StoredFoodPoints();
+    const std::wstring foodDays = residents > 0 ? std::to_wstring(food / residents) + L" 天" : L"--";
+    const COLORREF stabilityColor = g_game.territoryStability < 25.0f
+        ? RGB(236, 126, 116)
+        : g_game.territoryStability < 60.0f ? RGB(231, 190, 112) : RGB(164, 221, 173);
+    DrawTextLine(hdc, L"承载 " + std::to_wstring(RealityLoad()) + L" / " + std::to_wstring(RealityCapacityLimit()),
+                 70, 48, RGB(205, 226, 208));
+    DrawTextLine(hdc, L"食物 " + std::to_wstring(food) + L"（" + foodDays + L"）", 70, 68, RGB(222, 204, 145));
+    DrawTextLine(hdc, L"稳定 " + std::to_wstring(static_cast<int>(std::lround(g_game.territoryStability))) + L" / 100",
+                 70, 88, stabilityColor);
+    DrawTextLine(hdc, L"领地 " + std::to_wstring(TerritoryTileCount()) + L" / " + std::to_wstring(TerritoryAreaLimit()),
+                 70, 108, RGB(183, 204, 193));
+}
+
+void DrawCenteredText(HDC hdc, const std::wstring& text, const RECT& rect, COLORREF color, int fontSize);
+
 void DrawAnchorPanel(HDC hdc, const RECT& client) {
     if (!g_game.anchorPanelOpen) return;
+    if (!AnchorStorageAvailable() &&
+        (g_game.anchorPanelTab == AnchorPanelTab::Storage || g_game.anchorPanelTab == AnchorPanelTab::Workbench)) {
+        g_game.anchorPanelTab = AnchorPanelTab::Residents;
+    }
     const RECT panel = AnchorPanelRect(client);
     FillRectColor(hdc, panel, RGB(28, 35, 34));
     HPEN pen = CreatePen(PS_SOLID, 2, RGB(116, 160, 139));
@@ -2807,43 +3985,224 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
     SelectObject(hdc, oldPen);
     DeleteObject(pen);
 
-    DrawTextLine(hdc, L"现实锚点", panel.left + 20, panel.top + 18, RGB(230, 239, 216));
-    DrawTextLine(hdc, L"仓储  " + std::to_wstring(kAnchorStorageSlotCount) + L" 格", panel.left + 20, panel.top + 42, RGB(172, 205, 182));
-    DrawTextLine(hdc, L"背包", panel.left + 422, panel.top + 42, RGB(230, 239, 216));
-    DrawTextLine(hdc, L"领地居民  " + std::to_wstring(g_game.npcs.size()), panel.left + 422, panel.top + 222, RGB(172, 205, 182));
-
-    for (int i = 0; i < kAnchorStorageSlotCount; ++i) {
-        DrawInventorySlot(hdc, AnchorStorageSlotRect(panel, i), InventoryItemForDrawing(kAnchorStorageSlotBase + i), false, false);
-    }
-    for (int i = 0; i < kInventorySlotCount; ++i) {
-        DrawInventorySlot(hdc, AnchorInventorySlotRect(panel, i), InventoryItemForDrawing(i), false, false);
-    }
-
-    for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
-        const Npc& npc = g_game.npcs[i];
-        const RECT row = AnchorNpcRowRect(panel, i);
-        FillRectColor(hdc, row, i == g_game.anchorSelectedNpc ? RGB(68, 105, 86) : RGB(43, 52, 49));
-        DrawTextLine(hdc, npc.name, row.left + 8, row.top + 5, RGB(239, 240, 226));
-        DrawTextLine(hdc, npc.shadowForm ? L"影子" : L"实体", row.right - 42, row.top + 5,
-                     npc.shadowForm ? RGB(183, 191, 197) : RGB(179, 224, 185));
+    DrawTextLine(hdc, L"现实锚点", panel.left + 20, panel.top + 21, RGB(230, 239, 216));
+    const struct { AnchorPanelTab tab; const wchar_t* label; } tabs[] = {
+        {AnchorPanelTab::Storage, L"锚点仓库"},
+        {AnchorPanelTab::Workbench, L"工作台"},
+        {AnchorPanelTab::Residents, L"NPC 列表"},
+        {AnchorPanelTab::Work, L"工作和采集"},
+        {AnchorPanelTab::Technology, L"科技树"},
+    };
+    for (const auto& tab : tabs) {
+        const RECT rect = AnchorTabRect(panel, tab.tab);
+        if (rect.right <= rect.left) continue;
+        const bool selected = g_game.anchorPanelTab == tab.tab;
+        FillRectColor(hdc, rect, selected ? RGB(72, 112, 91) : RGB(43, 52, 49));
+        DrawCenteredText(hdc, tab.label, rect, selected ? RGB(235, 243, 222) : RGB(180, 192, 181), 17);
     }
 
-    if (g_game.anchorSelectedNpc >= 0 && g_game.anchorSelectedNpc < static_cast<int>(g_game.npcs.size())) {
-        const Npc& npc = g_game.npcs[g_game.anchorSelectedNpc];
-        const int infoY = panel.bottom - 108;
-        DrawTextLine(hdc, npc.name + L"  " + npc.personality, panel.left + 422, infoY, RGB(235, 239, 222));
-        DrawTextLine(hdc, L"好感度 " + std::to_wstring(npc.affinity) + L" / 100", panel.left + 422, infoY + 22, RGB(222, 190, 126));
-        DrawTextLine(hdc, L"血量 " + std::to_wstring(npc.health) + L" / 60", panel.left + 590, infoY + 22, RGB(223, 132, 132));
-        constexpr const wchar_t* labels[] = {L"采集石", L"建筑石", L"战斗石"};
-        for (int i = 0; i < kSpiritSlotCount; ++i) {
-            const RECT button = AnchorStoneButtonRect(panel, i);
-            FillRectColor(hdc, button, npc.spiritStones[i] ? RGB(62, 116, 81) : RGB(50, 59, 56));
-            DrawTextLine(hdc, npc.spiritStones[i] ? std::wstring(labels[i]) + L" 已装备" : std::wstring(labels[i]),
-                         button.left + 7, button.top + 6,
-                         npc.spiritStones[i] ? RGB(213, 244, 218) : RGB(222, 226, 210));
+    if (g_game.anchorPanelTab == AnchorPanelTab::Storage) {
+        DrawTextLine(hdc, L"锚点仓储  " + std::to_wstring(kAnchorStorageSlotCount) + L" 格", panel.left + 20, panel.top + 70, RGB(172, 205, 182));
+        DrawTextLine(hdc, L"主角背包", panel.left + 422, panel.top + 70, RGB(230, 239, 216));
+        for (int i = 0; i < kAnchorStorageSlotCount; ++i) {
+            DrawInventorySlot(hdc, AnchorStorageSlotRect(panel, i), InventoryItemForDrawing(kAnchorStorageSlotBase + i), false, false);
         }
-    } else {
-        DrawTextLine(hdc, L"选择居民查看资料", panel.left + 422, panel.bottom - 54, RGB(172, 185, 175));
+        for (int i = 0; i < kInventorySlotCount; ++i) {
+            DrawInventorySlot(hdc, AnchorInventorySlotRect(panel, i), InventoryItemForDrawing(i), false, false);
+        }
+        return;
+    }
+
+    if (g_game.anchorPanelTab == AnchorPanelTab::Workbench) {
+        DrawTextLine(hdc, L"工作台", panel.left + 28, panel.top + 68, RGB(230, 239, 216));
+        DrawTextLine(hdc, L"制作会优先消耗背包材料，再消耗锚点仓库材料",
+                     panel.left + 126, panel.top + 68, RGB(151, 176, 162));
+        for (int i = 0; i < static_cast<int>(kWorkbenchRecipes.size()); ++i) {
+            const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[i];
+            const RECT row = WorkbenchRecipeRect(panel, i);
+            const bool unlocked = !recipe.requiredBlueprint || BlueprintUnlocked(recipe.requiredBlueprint);
+            FillRectColor(hdc, row, i == g_game.anchorSelectedWorkbenchRecipe ? RGB(68, 105, 86) : RGB(43, 52, 49));
+            DrawTextLine(hdc, recipe.name, row.left + 9, row.top + 5,
+                         unlocked ? RGB(232, 239, 220) : RGB(143, 151, 146));
+            if (!unlocked) DrawTextLine(hdc, L"未解锁", row.right - 58, row.top + 5, RGB(173, 137, 126));
+        }
+
+        const int selected = std::clamp(g_game.anchorSelectedWorkbenchRecipe, 0,
+                                        static_cast<int>(kWorkbenchRecipes.size()) - 1);
+        const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[selected];
+        const bool unlocked = !recipe.requiredBlueprint || BlueprintUnlocked(recipe.requiredBlueprint);
+        const bool craftable = WorkbenchRecipeCraftable(recipe);
+        const int detailX = panel.left + 360;
+        DrawTextLine(hdc, recipe.name, detailX, panel.top + 112,
+                     unlocked ? RGB(236, 241, 222) : RGB(151, 159, 153));
+        if (unlocked) {
+            DrawTextLine(hdc, L"所需材料", detailX, panel.top + 154, RGB(170, 202, 181));
+            for (int i = 0; i < recipe.ingredientCount; ++i) {
+                const auto& ingredient = recipe.ingredients[i];
+                const int owned = StoredItemCount(ingredient.id);
+                DrawTextLine(hdc, std::wstring(ingredient.name) + L"  " + std::to_wstring(owned) + L" / " +
+                             std::to_wstring(ingredient.count), detailX, panel.top + 190 + i * 34,
+                             owned >= ingredient.count ? RGB(169, 220, 178) : RGB(220, 147, 133));
+            }
+            DrawTextLine(hdc, L"成品进入主角背包", detailX, panel.bottom - 108, RGB(149, 166, 156));
+        } else {
+            DrawTextLine(hdc, L"需要先在科技树解锁该建筑蓝图", detailX, panel.top + 160, RGB(174, 148, 137));
+        }
+        const RECT button = WorkbenchCraftButtonRect(panel);
+        FillRectColor(hdc, button, craftable ? RGB(70, 121, 85) : RGB(53, 60, 57));
+        DrawCenteredText(hdc, unlocked ? (craftable ? L"制作" : L"材料不足或背包已满") : L"尚未解锁", button,
+                         craftable ? RGB(231, 246, 224) : RGB(154, 163, 157), 16);
+        return;
+    }
+
+    if (g_game.anchorPanelTab == AnchorPanelTab::Work) {
+        DrawTextLine(hdc, L"居民工作分配", panel.left + 20, panel.top + 68, RGB(172, 205, 182));
+        DrawTextLine(hdc, L"任务与物资", panel.left + 342, panel.top + 68, RGB(230, 239, 216));
+        for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
+            const Npc& npc = g_game.npcs[i];
+            const RECT row = AnchorNpcRowRect(panel, i);
+            if (row.bottom > panel.bottom - 18) break;
+            FillRectColor(hdc, row, i == g_game.anchorSelectedNpc ? RGB(68, 105, 86) : RGB(43, 52, 49));
+            DrawTextLine(hdc, npc.name, row.left + 8, row.top + 5, RGB(239, 240, 226));
+            DrawTextLine(hdc, NpcTaskLabel(npc), row.right - 74, row.top + 5, RGB(179, 216, 187));
+        }
+        if (g_game.anchorSelectedNpc < 0 || g_game.anchorSelectedNpc >= static_cast<int>(g_game.npcs.size())) {
+            DrawTextLine(hdc, L"从左侧选择居民", panel.left + 342, panel.top + 108, RGB(172, 185, 175));
+            return;
+        }
+
+        const Npc& npc = g_game.npcs[g_game.anchorSelectedNpc];
+        DrawTextLine(hdc, npc.name + L"    " + NpcTaskLabel(npc), panel.left + 342, panel.top + 94, RGB(235, 239, 222));
+        DrawTextLine(hdc, L"设施岗位", panel.left + 342, panel.top + 116, RGB(160, 193, 174));
+        const auto jobs = AvailableNpcFacilityJobs();
+        if (jobs.empty()) {
+            DrawTextLine(hdc, L"当前领地没有可用生产设施", panel.left + 342, panel.top + 142, RGB(169, 151, 141));
+        } else {
+            for (int i = 0; i < static_cast<int>(jobs.size()) && i < 2; ++i) {
+                const RECT row = NpcWorkFacilityRect(panel, i);
+                const bool selected = npc.taskMode == NpcTaskMode::Facility && npc.facilityId == jobs[i].objectId;
+                const auto occupant = std::find_if(g_game.npcs.begin(), g_game.npcs.end(), [&](const Npc& resident) {
+                    return resident.taskMode == NpcTaskMode::Facility && resident.facilityId == jobs[i].objectId;
+                });
+                FillRectColor(hdc, row, selected ? RGB(64, 112, 80) : RGB(48, 58, 54));
+                std::wstring label = jobs[i].name;
+                label += L"  ";
+                label += occupant == g_game.npcs.end() ? L"空闲" : occupant->name;
+                DrawTextLine(hdc, label, row.left + 10, row.top + 6,
+                             selected ? RGB(209, 239, 214) : RGB(222, 228, 215));
+            }
+        }
+
+        DrawTextLine(hdc, L"外出采集", panel.left + 342, panel.top + 196, RGB(160, 193, 174));
+        constexpr const char* targetIds[] = {"any", "wood", "exotic_wood", "stone"};
+        constexpr const wchar_t* targetNames[] = {L"自由采集", L"木头", L"特异木头", L"石头"};
+        for (int i = 0; i < 4; ++i) {
+            const RECT button = NpcGatherTargetRect(panel, i);
+            const bool selected = npc.gatheringTarget == targetIds[i];
+            FillRectColor(hdc, button, selected ? RGB(63, 105, 82) : RGB(48, 58, 54));
+            DrawCenteredText(hdc, targetNames[i], button,
+                             selected ? RGB(218, 241, 218) : RGB(218, 224, 212), 15);
+        }
+        const RECT start = NpcStartGatheringRect(panel);
+        const RECT home = NpcReturnHomeRect(panel);
+        const RECT stop = NpcStopWorkRect(panel);
+        FillRectColor(hdc, start, npc.spiritStones[0] ? RGB(57, 108, 76) : RGB(58, 64, 61));
+        FillRectColor(hdc, home, RGB(65, 83, 75));
+        FillRectColor(hdc, stop, RGB(82, 63, 61));
+        DrawCenteredText(hdc, L"开始采集", start, npc.spiritStones[0] ? RGB(225, 244, 221) : RGB(145, 153, 148), 15);
+        DrawCenteredText(hdc, L"立即回家", home, RGB(226, 235, 224), 15);
+        DrawCenteredText(hdc, L"停止任务", stop, RGB(239, 221, 218), 15);
+
+        DrawTextLine(hdc, L"灵石", panel.left + 342, panel.top + 318, RGB(160, 193, 174));
+        constexpr const wchar_t* stoneLabels[] = {L"采集石", L"建筑石", L"战斗石"};
+        for (int i = 0; i < kSpiritSlotCount; ++i) {
+            const RECT button{panel.left + 342 + i * 156, panel.top + 340,
+                              panel.left + 342 + i * 156 + 144, panel.top + 374};
+            FillRectColor(hdc, button, npc.spiritStones[i] ? RGB(62, 116, 81) : RGB(50, 59, 56));
+            DrawCenteredText(hdc, npc.spiritStones[i] ? std::wstring(stoneLabels[i]) + L"  已装备" : stoneLabels[i], button,
+                             npc.spiritStones[i] ? RGB(213, 244, 218) : RGB(222, 226, 210), 15);
+        }
+
+        DrawTextLine(hdc, L"随身背包  " + std::to_wstring(NpcCargoUsedSlots(npc)) + L" / 10",
+                     panel.left + 342, panel.top + 384, RGB(160, 193, 174));
+        for (int i = 0; i < static_cast<int>(npc.cargo.size()); ++i) {
+            ItemStack item;
+            if (!npc.cargo[i].id.empty()) item = MakeItemStack(npc.cargo[i].id, npc.cargo[i].count);
+            DrawInventorySlot(hdc, NpcWorkCargoRect(panel, i), item, false, false);
+        }
+        return;
+    }
+
+    if (g_game.anchorPanelTab == AnchorPanelTab::Residents) {
+        DrawTextLine(hdc, L"领地居民  " + std::to_wstring(g_game.npcs.size()) + L"    承载 " +
+                     std::to_wstring(RealityLoad()) + L" / " + std::to_wstring(RealityCapacityLimit()) +
+                     L"    食物 " + std::to_wstring(StoredFoodPoints()) + L"    稳定 " +
+                     std::to_wstring(static_cast<int>(std::lround(g_game.territoryStability))),
+                     panel.left + 20, panel.top + 68, RGB(172, 205, 182));
+        DrawTextLine(hdc, L"居民详细属性", panel.left + 342, panel.top + 68, RGB(230, 239, 216));
+        for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
+            const Npc& npc = g_game.npcs[i];
+            const RECT row = AnchorNpcRowRect(panel, i);
+            if (row.bottom > panel.bottom - 18) break;
+            FillRectColor(hdc, row, i == g_game.anchorSelectedNpc ? RGB(68, 105, 86) : RGB(43, 52, 49));
+            DrawTextLine(hdc, npc.name, row.left + 8, row.top + 5, RGB(239, 240, 226));
+            DrawTextLine(hdc, npc.shadowForm ? L"影子" : L"实体", row.right - 46, row.top + 5,
+                         npc.shadowForm ? RGB(183, 191, 197) : RGB(179, 224, 185));
+        }
+        if (g_game.anchorSelectedNpc >= 0 && g_game.anchorSelectedNpc < static_cast<int>(g_game.npcs.size())) {
+            const Npc& npc = g_game.npcs[g_game.anchorSelectedNpc];
+            const int x = panel.left + 342;
+            const int y = panel.top + 108;
+            DrawTextLine(hdc, npc.name, x, y, RGB(235, 239, 222));
+            DrawTextLine(hdc, L"形态：" + std::wstring(npc.shadowForm ? L"影子" : L"实体"), x, y + 34, RGB(186, 210, 196));
+            DrawTextLine(hdc, L"血量：" + std::to_wstring(npc.health) + L" / 60", x, y + 64, RGB(223, 132, 132));
+            DrawTextLine(hdc, L"好感度：" + std::to_wstring(npc.affinity) + L" / 100", x + 220, y + 64, RGB(222, 190, 126));
+            DrawTextLine(hdc, L"性格：" + npc.personality, x, y + 94, RGB(214, 218, 202));
+            DrawTextLine(hdc, L"状态：" + std::wstring(npc.following ? L"跟随中" : L"领地内自由活动"), x + 220, y + 94, RGB(179, 207, 190));
+            DrawTextLine(hdc, L"灵石配备", x, panel.top + 270, RGB(172, 205, 182));
+            constexpr const wchar_t* labels[] = {L"采集石", L"建筑石", L"战斗石"};
+            for (int i = 0; i < kSpiritSlotCount; ++i) {
+                const RECT button = AnchorStoneButtonRect(panel, i);
+                FillRectColor(hdc, button, npc.spiritStones[i] ? RGB(62, 116, 81) : RGB(50, 59, 56));
+                DrawCenteredText(hdc, npc.spiritStones[i] ? std::wstring(labels[i]) + L"  已装备" : labels[i], button,
+                                 npc.spiritStones[i] ? RGB(213, 244, 218) : RGB(222, 226, 210), 16);
+            }
+        } else {
+            DrawTextLine(hdc, g_game.npcs.empty() ? L"当前领地没有居民" : L"从左侧选择居民查看资料",
+                         panel.left + 342, panel.top + 112, RGB(172, 185, 175));
+        }
+        return;
+    }
+
+    DrawTextLine(hdc, L"建筑蓝图", panel.left + 20, panel.top + 68, RGB(172, 205, 182));
+    DrawTextLine(hdc, L"点击可研究的节点完成解锁", panel.left + 600, panel.top + 24, RGB(148, 168, 157));
+    HPEN linkPen = CreatePen(PS_SOLID, 2, RGB(84, 112, 98));
+    HGDIOBJ oldLinkPen = SelectObject(hdc, linkPen);
+    const RECT root = AnchorBlueprintRect(panel, 0);
+    for (int i = 1; i < static_cast<int>(kAnchorBlueprints.size()); ++i) {
+        const RECT child = AnchorBlueprintRect(panel, i);
+        MoveToEx(hdc, root.right, (root.top + root.bottom) / 2, nullptr);
+        LineTo(hdc, child.left, (child.top + child.bottom) / 2);
+    }
+    SelectObject(hdc, oldLinkPen);
+    DeleteObject(linkPen);
+    for (int i = 0; i < static_cast<int>(kAnchorBlueprints.size()); ++i) {
+        const AnchorBlueprintDef& blueprint = kAnchorBlueprints[i];
+        const bool unlocked = BlueprintUnlocked(blueprint.id);
+        const bool available = BlueprintAvailable(blueprint);
+        const RECT node = AnchorBlueprintRect(panel, i);
+        FillRectColor(hdc, node, unlocked ? RGB(60, 111, 78) : available ? RGB(57, 67, 62) : RGB(39, 44, 43));
+        HPEN nodePen = CreatePen(PS_SOLID, 1, unlocked ? RGB(151, 213, 167) : RGB(102, 119, 109));
+        HGDIOBJ oldNodePen = SelectObject(hdc, nodePen);
+        HGDIOBJ oldNodeBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(hdc, node.left, node.top, node.right, node.bottom);
+        SelectObject(hdc, oldNodeBrush);
+        SelectObject(hdc, oldNodePen);
+        DeleteObject(nodePen);
+        DrawTextLine(hdc, blueprint.name, node.left + 12, node.top + 12, unlocked ? RGB(226, 245, 220) : RGB(223, 227, 214));
+        DrawTextLine(hdc, unlocked ? L"已解锁" : available ? L"点击解锁" : L"前置未完成",
+                     node.left + 12, node.top + 42, unlocked ? RGB(161, 224, 176) : RGB(169, 181, 172));
+        DrawTextLine(hdc, blueprint.description, node.right + 18, node.top + 26, RGB(177, 192, 180));
     }
 }
 
@@ -2871,6 +4230,78 @@ void DrawCenteredText(HDC hdc, const std::wstring& text, const RECT& rect, COLOR
     DrawTextW(hdc, text.c_str(), -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(hdc, oldFont);
     DeleteObject(font);
+}
+
+RECT DeathPanelRect(const RECT& client) {
+    constexpr int width = 760;
+    constexpr int height = 500;
+    const int left = (client.right - width) / 2;
+    const int top = (client.bottom - height) / 2;
+    return {left, top, left + width, top + height};
+}
+
+RECT DeathNpcRowRect(const RECT& client, int index) {
+    const RECT panel = DeathPanelRect(client);
+    constexpr int rowsPerColumn = 10;
+    constexpr int rowHeight = 38;
+    constexpr int columnWidth = 350;
+    const int column = index / rowsPerColumn;
+    const int row = index % rowsPerColumn;
+    const int left = panel.left + 20 + column * (columnWidth + 20);
+    const int top = panel.top + 74 + row * 40;
+    return {left, top, left + columnWidth, top + rowHeight};
+}
+
+int HitDeathNpc(const RECT& client, int x, int y) {
+    if (g_game.deathPhase != DeathPhase::AwaitingSacrifice || g_game.deathTime < 0.65f) return -1;
+    for (int i = 0; i < static_cast<int>(g_game.npcs.size()) && i < 20; ++i) {
+        const RECT row = DeathNpcRowRect(client, i);
+        if (PtInRect(&row, POINT{x, y})) return i;
+    }
+    return -1;
+}
+
+void DrawDeathOverlay(HDC hdc, const RECT& client) {
+    if (g_game.deathPhase == DeathPhase::None) return;
+    float opacity = 0.0f;
+    if (g_game.deathPhase == DeathPhase::CompensationIntro || g_game.deathPhase == DeathPhase::FinalEnding) {
+        opacity = std::min(1.0f, g_game.deathTime / 1.2f);
+    } else if (g_game.deathPhase == DeathPhase::AwaitingSacrifice) {
+        opacity = std::max(0.0f, 1.0f - g_game.deathTime / 0.8f);
+    } else if (g_game.deathPhase == DeathPhase::RevivalFade) {
+        opacity = std::max(0.0f, 1.0f - g_game.deathTime / 1.0f);
+    }
+    if (opacity > 0.0f && EnsureGdiPlus()) {
+        Gdiplus::Graphics graphics(hdc);
+        Gdiplus::SolidBrush black(Gdiplus::Color(static_cast<BYTE>(std::lround(opacity * 255.0f)), 0, 0, 0));
+        graphics.FillRectangle(&black, static_cast<INT>(client.left), static_cast<INT>(client.top),
+                               static_cast<INT>(client.right - client.left), static_cast<INT>(client.bottom - client.top));
+    }
+
+    if (g_game.deathPhase == DeathPhase::CompensationIntro && g_game.deathTime >= 0.55f) {
+        DrawCenteredText(hdc, L"锚点死亡，影子代偿", client, RGB(235, 235, 226), 30);
+    } else if (g_game.deathPhase == DeathPhase::FinalEnding && g_game.deathTime >= 0.55f) {
+        DrawCenteredText(hdc, L"你挥霍完所有人的生命，最终无人为你续命", client, RGB(225, 220, 214), 26);
+    } else if (g_game.deathPhase == DeathPhase::AwaitingSacrifice) {
+        const RECT panel = DeathPanelRect(client);
+        if (EnsureGdiPlus()) {
+            Gdiplus::Graphics graphics(hdc);
+            Gdiplus::SolidBrush panelBrush(Gdiplus::Color(218, 22, 27, 26));
+            graphics.FillRectangle(&panelBrush, static_cast<INT>(panel.left), static_cast<INT>(panel.top),
+                                   static_cast<INT>(panel.right - panel.left), static_cast<INT>(panel.bottom - panel.top));
+        }
+        FrameRect(hdc, &panel, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
+        RECT title{panel.left + 18, panel.top + 14, panel.right - 18, panel.top + 52};
+        DrawCenteredText(hdc, L"选择一名影子代偿锚点死亡", title, RGB(239, 231, 210), 24);
+        for (int i = 0; i < static_cast<int>(g_game.npcs.size()) && i < 20; ++i) {
+            const Npc& npc = g_game.npcs[i];
+            const RECT row = DeathNpcRowRect(client, i);
+            FillRectColor(hdc, row, RGB(48, 55, 51));
+            const std::wstring label = npc.name + L"    生命 " + std::to_wstring(npc.health) +
+                                       L"    好感 " + std::to_wstring(npc.affinity) + L"    " + npc.personality;
+            DrawCenteredText(hdc, label, row, RGB(226, 229, 215), 15);
+        }
+    }
 }
 
 void DrawMenuButton(HDC hdc, const RECT& rect, const std::wstring& label, bool selected = false) {
@@ -3050,6 +4481,7 @@ void RenderGame(HWND hwnd, HDC target) {
     DrawWanderingShadows(hdc);
 
     for (const Npc& npc : g_game.npcs) {
+        if (!NpcInCurrentScene(npc)) continue;
         DrawEllipse(hdc, npc.pos, 15.0f, 19.0f,
                     npc.shadowForm ? RGB(93, 98, 103) : RGB(222, 185, 94),
                     npc.shadowForm ? RGB(177, 184, 190) : RGB(76, 55, 32));
@@ -3062,12 +4494,13 @@ void RenderGame(HWND hwnd, HDC target) {
         if (npc.following) {
             DrawTextLine(
                 hdc,
-                npc.shadowForm ? L"影子" : (npc.inCombat ? L"战斗" : L"跟随"),
+                npc.shadowForm ? L"影子" : (npc.evading ? L"躲避" : (npc.inCombat ? L"战斗" : L"跟随")),
                 static_cast<int>(std::round(npc.pos.x * renderScale - g_game.camera.x - 16.0f * renderScale)),
                 static_cast<int>(std::round(npc.pos.y * renderScale - g_game.camera.y + 22.0f * renderScale)),
-                npc.shadowForm ? RGB(184, 191, 198) : (npc.inCombat ? RGB(244, 126, 126) : RGB(177, 228, 190)));
-        } else if (npc.returningHome) {
-            DrawTextLine(hdc, L"返回领地",
+                npc.shadowForm ? RGB(184, 191, 198) :
+                    (npc.evading ? RGB(244, 205, 126) : (npc.inCombat ? RGB(244, 126, 126) : RGB(177, 228, 190))));
+        } else if (npc.returningHome || npc.taskMode != NpcTaskMode::Idle) {
+            DrawTextLine(hdc, NpcTaskLabel(npc),
                          static_cast<int>(std::round(npc.pos.x * renderScale - g_game.camera.x - 28.0f * renderScale)),
                          static_cast<int>(std::round(npc.pos.y * renderScale - g_game.camera.y + 22.0f * renderScale)),
                          RGB(192, 215, 203));
@@ -3080,7 +4513,7 @@ void RenderGame(HWND hwnd, HDC target) {
         }
     }
 
-    DrawPlayer(hdc);
+    if (g_game.deathPhase != DeathPhase::AwaitingSacrifice) DrawPlayer(hdc);
 
     for (const rpg::SceneObject* object : objects) {
         if (!rpg::ObjectIsGroundOverlay(*object) && rpg::ObjectSortY(*object) > playerSortY) {
@@ -3089,10 +4522,12 @@ void RenderGame(HWND hwnd, HDC target) {
     }
 
     DrawDebugCollisionOverlay(hdc);
+    DrawWorldFog(hdc, client);
 
     const std::wstring zoomText = L"视角 " + std::to_wstring(static_cast<int>(std::round(renderScale * 100.0f))) + L"%";
     DrawTextLine(hdc, zoomText, 18, 18, RGB(220, 230, 202));
     DrawAnchorButton(hdc);
+    DrawTerritoryStatus(hdc);
 
     if (g_game.nearbyNpc >= 0 && !g_game.showTalk) {
         DrawTextLine(hdc, L"Press E", kWindowWidth / 2 - 40, kWindowHeight - 70, RGB(255, 250, 190));
@@ -3160,6 +4595,7 @@ void RenderGame(HWND hwnd, HDC target) {
     DrawDraggedInventoryItem(hdc);
     DrawWorldMap(hdc, client);
     DrawDebugConsole(hdc, client);
+    DrawDeathOverlay(hdc, client);
 
     BitBlt(target, 0, 0, client.right, client.bottom, hdc, 0, 0, SRCCOPY);
 
@@ -3175,12 +4611,150 @@ void ToggleAnchorPanel() {
         return;
     }
     g_game.anchorPanelOpen = !g_game.anchorPanelOpen;
+    if (g_game.anchorPanelOpen) {
+        g_game.anchorPanelTab = AnchorStorageAvailable() ? AnchorPanelTab::Storage : AnchorPanelTab::Residents;
+        if (g_game.anchorSelectedNpc < 0 && !g_game.npcs.empty()) g_game.anchorSelectedNpc = 0;
+    }
     g_game.inventory.open = false;
     g_game.inventory.dragging = false;
     g_game.inventory.dragSource = -1;
     g_game.npcContextIndex = -1;
     g_game.showTalk = false;
     if (!g_game.anchorPanelOpen) g_game.anchorSelectedNpc = -1;
+}
+
+void SelectAnchorPanelTab(AnchorPanelTab tab) {
+    if ((tab == AnchorPanelTab::Storage || tab == AnchorPanelTab::Workbench) && !AnchorStorageAvailable()) return;
+    g_game.anchorPanelTab = tab;
+    g_game.inventory.dragging = false;
+    g_game.inventory.dragSource = -1;
+    if ((tab == AnchorPanelTab::Residents || tab == AnchorPanelTab::Work) &&
+        g_game.anchorSelectedNpc < 0 && !g_game.npcs.empty()) {
+        g_game.anchorSelectedNpc = 0;
+    }
+}
+
+void AssignSelectedNpcFacility(int index) {
+    if (g_game.anchorSelectedNpc < 0 || g_game.anchorSelectedNpc >= static_cast<int>(g_game.npcs.size())) return;
+    const auto jobs = AvailableNpcFacilityJobs();
+    if (index < 0 || index >= static_cast<int>(jobs.size())) return;
+    for (int i = 0; i < static_cast<int>(g_game.npcs.size()); ++i) {
+        if (i != g_game.anchorSelectedNpc && g_game.npcs[i].taskMode == NpcTaskMode::Facility &&
+            g_game.npcs[i].facilityId == jobs[index].objectId) {
+            g_game.pickupNotice = L"该岗位已由 " + g_game.npcs[i].name + L" 负责";
+            g_game.pickupNoticeTime = 2.0f;
+            return;
+        }
+    }
+    Npc& npc = g_game.npcs[g_game.anchorSelectedNpc];
+    npc.taskMode = NpcTaskMode::Facility;
+    npc.facilityId = jobs[index].objectId;
+    npc.workMap = g_currentScenePath.filename().wstring();
+    npc.gatheringObjectId.clear();
+    npc.following = false;
+    npc.returningHome = false;
+    npc.inCombat = false;
+    npc.workTimer = 0.0f;
+    g_game.pickupNotice = npc.name + L" 已分配至 " + jobs[index].name;
+    g_game.pickupNoticeTime = 2.0f;
+    SaveCurrentGame();
+}
+
+void SelectNpcGatheringTarget(int index) {
+    if (g_game.anchorSelectedNpc < 0 || g_game.anchorSelectedNpc >= static_cast<int>(g_game.npcs.size())) return;
+    constexpr const char* targets[] = {"any", "wood", "exotic_wood", "stone"};
+    if (index < 0 || index >= static_cast<int>(std::size(targets))) return;
+    g_game.npcs[g_game.anchorSelectedNpc].gatheringTarget = targets[index];
+    SaveCurrentGame();
+}
+
+void ExecuteNpcWorkAction(NpcWorkAction action) {
+    if (action == NpcWorkAction::None || g_game.anchorSelectedNpc < 0 ||
+        g_game.anchorSelectedNpc >= static_cast<int>(g_game.npcs.size())) return;
+    Npc& npc = g_game.npcs[g_game.anchorSelectedNpc];
+    if (action == NpcWorkAction::StartGathering) {
+        if (!npc.spiritStones[0]) {
+            g_game.pickupNotice = L"需要先给 " + npc.name + L" 装备采集石";
+            g_game.pickupNoticeTime = 2.0f;
+            return;
+        }
+        npc.taskMode = NpcTaskMode::Gathering;
+        npc.workMap = g_currentScenePath.filename().wstring();
+        npc.facilityId.clear();
+        npc.gatheringObjectId.clear();
+        npc.following = false;
+        npc.returningHome = false;
+        npc.inCombat = false;
+        npc.workTimer = 0.0f;
+        g_game.pickupNotice = npc.name + L" 已开始外出采集";
+    } else if (action == NpcWorkAction::ReturnHome) {
+        npc.taskMode = NpcTaskMode::Returning;
+        npc.gatheringObjectId.clear();
+        npc.following = false;
+        npc.inCombat = false;
+        npc.workTimer = 0.0f;
+        g_game.pickupNotice = npc.name + L" 正在立即返回领地";
+    } else {
+        const bool needsReturn = !ActorProtectedByTerritory(npc.pos) || NpcCargoUsedSlots(npc) > 0;
+        npc.taskMode = needsReturn ? NpcTaskMode::Returning : NpcTaskMode::Idle;
+        npc.facilityId.clear();
+        npc.gatheringObjectId.clear();
+        npc.following = false;
+        npc.inCombat = false;
+        npc.workTimer = 0.0f;
+        g_game.pickupNotice = npc.taskMode == NpcTaskMode::Idle ? npc.name + L" 已停止任务"
+                                                                : npc.name + L" 已停止任务，正在返程卸货";
+    }
+    g_game.pickupNoticeTime = 2.0f;
+    SaveCurrentGame();
+}
+
+void CraftWorkbenchRecipe(int index) {
+    if (!AnchorStorageAvailable() || index < 0 || index >= static_cast<int>(kWorkbenchRecipes.size())) return;
+    const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[index];
+    if (recipe.requiredBlueprint && !BlueprintUnlocked(recipe.requiredBlueprint)) {
+        g_game.pickupNotice = L"需要先在科技树解锁该蓝图";
+    } else {
+        for (int i = 0; i < recipe.ingredientCount; ++i) {
+            if (StoredItemCount(recipe.ingredients[i].id) < recipe.ingredients[i].count) {
+                g_game.pickupNotice = L"制作材料不足";
+                g_game.pickupNoticeTime = 2.0f;
+                return;
+            }
+        }
+        if (!CanStoreWorkbenchOutput(recipe.outputId)) {
+            g_game.pickupNotice = L"主角背包已满";
+            g_game.pickupNoticeTime = 2.0f;
+            return;
+        }
+        ItemStack output = MakeItemStack(recipe.outputId, 1);
+        if (output.id.empty()) {
+            g_game.pickupNotice = L"物品定义缺失";
+        } else {
+            for (int i = 0; i < recipe.ingredientCount; ++i) {
+                ConsumeStoredItem(recipe.ingredients[i].id, recipe.ingredients[i].count);
+            }
+            StoreItem(output);
+            g_game.pickupNotice = std::wstring(L"制作完成：") + recipe.name;
+            SaveCurrentGame();
+        }
+    }
+    g_game.pickupNoticeTime = 2.0f;
+}
+
+void UnlockAnchorBlueprint(int index) {
+    if (index < 0 || index >= static_cast<int>(kAnchorBlueprints.size())) return;
+    const AnchorBlueprintDef& blueprint = kAnchorBlueprints[index];
+    if (BlueprintUnlocked(blueprint.id)) {
+        g_game.pickupNotice = std::wstring(blueprint.name) + L" 已经解锁";
+    } else if (!BlueprintAvailable(blueprint)) {
+        g_game.pickupNotice = L"需要先完成前置科技";
+    } else {
+        g_game.unlockedBlueprints.insert(blueprint.id);
+        g_game.pickupNotice = std::wstring(L"已解锁建筑蓝图：") + blueprint.name;
+        SaveCurrentGame();
+    }
+    g_game.pickupNoticeTime = 2.0f;
 }
 
 void ToggleAnchorNpcStone(int stoneIndex) {
@@ -3227,7 +4801,7 @@ void ToggleInventory() {
 }
 
 void StartAttack() {
-    if (g_game.inventory.heldItem.id != kCombatStoneId) {
+    if (!HeldSpiritSkill(2)) {
         g_game.pickupNotice = L"需要启用战斗石";
         g_game.pickupNoticeTime = 1.2f;
         return;
@@ -3255,6 +4829,7 @@ void StartAttack() {
         if (monster.health <= 0) {
             monster.health = 0;
             monster.alive = false;
+            SpawnMonsterLoot(monster.pos);
             g_game.activeCombatMonster = -1;
             for (Npc& npc : g_game.npcs) npc.inCombat = false;
         } else {
@@ -3264,13 +4839,14 @@ void StartAttack() {
 }
 
 const char* GatheringDropForObject(const rpg::SceneObject& object) {
-    if (object.type == "tree_oak" || object.type == "exotic_tree_01") return "wood";
-    if (object.type == "stone_round") return "iron_ore";
+    if (object.type == "tree_oak") return "wood";
+    if (object.type == "exotic_tree_01") return "exotic_wood";
+    if (object.type == "stone_round") return "stone";
     return nullptr;
 }
 
 void StartGathering() {
-    if (g_game.inventory.heldItem.id != kGatheringStoneId) {
+    if (!HeldSpiritSkill(0)) {
         g_game.pickupNotice = L"需要启用采集石";
         g_game.pickupNoticeTime = 1.2f;
         return;
@@ -3378,6 +4954,12 @@ void SetKey(WPARAM key, bool pressed) {
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (g_screen == AppScreen::Playing && g_game.deathPhase != DeathPhase::None &&
+        (msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_MOUSEWHEEL ||
+         msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP || msg == WM_RBUTTONDOWN ||
+         msg == WM_RBUTTONUP || msg == WM_LBUTTONUP || msg == WM_CAPTURECHANGED)) {
+        return 0;
+    }
     switch (msg) {
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -3411,6 +4993,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
+        if (g_game.deathPhase != DeathPhase::None) return 0;
         if (wParam == VK_OEM_3) {
             if ((lParam & (1LL << 30)) == 0) {
                 g_console.open = !g_console.open;
@@ -3499,7 +5082,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SetKey(wParam, true);
         return 0;
     case WM_CHAR:
-        if (g_screen != AppScreen::Playing || !g_console.open) {
+        if (g_screen != AppScreen::Playing || g_game.deathPhase != DeathPhase::None || !g_console.open) {
             return DefWindowProcW(hwnd, msg, wParam, lParam);
         }
         if (wParam == L'\r') {
@@ -3512,6 +5095,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_KEYUP:
+        if (g_game.deathPhase != DeathPhase::None) return 0;
         if (g_console.open) return 0;
         if (g_game.mapOpen) return 0;
         if (g_game.inventory.placingBuilding) {
@@ -3531,6 +5115,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        if (g_game.deathPhase != DeathPhase::None) {
+            if (const int npc = HitDeathNpc(client, x, y); npc >= 0) SacrificeNpc(npc);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (g_console.open || g_game.mapOpen) return 0;
         if (g_game.inventory.open) {
             if (const int spirit = HitSpiritMenu(client, x, y); spirit >= 0) {
@@ -3542,6 +5131,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             if (PointInSpiritMenu(client, x, y)) {
                 AppendConsoleLine(L"[input] 扇形菜单边缘点击已拦截");
+                return 0;
+            }
+        }
+        if (g_game.anchorPanelOpen) {
+            if (const int tab = HitAnchorTab(client, x, y); tab >= 0) {
+                SelectAnchorPanelTab(static_cast<AnchorPanelTab>(tab));
+                InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
         }
@@ -3567,6 +5163,36 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (g_game.anchorPanelOpen) {
+            if (const int recipeRow = HitWorkbenchRecipeRow(client, x, y); recipeRow >= 0) {
+                g_game.anchorSelectedWorkbenchRecipe = recipeRow;
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (const int recipe = HitWorkbenchRecipe(client, x, y); recipe >= 0) {
+                CraftWorkbenchRecipe(recipe);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (const int facility = HitNpcWorkFacility(client, x, y); facility >= 0) {
+                AssignSelectedNpcFacility(facility);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (const int target = HitNpcGatherTarget(client, x, y); target >= 0) {
+                SelectNpcGatheringTarget(target);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (const NpcWorkAction action = HitNpcWorkAction(client, x, y); action != NpcWorkAction::None) {
+                ExecuteNpcWorkAction(action);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (const int blueprint = HitAnchorBlueprint(client, x, y); blueprint >= 0) {
+                UnlockAnchorBlueprint(blueprint);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (const int stone = HitAnchorNpcStone(client, x, y); stone >= 0) {
                 ToggleAnchorNpcStone(stone);
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -3599,11 +5225,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_game.shadowDialogIndex < static_cast<int>(g_game.wanderingShadows.size())) {
                 WanderingShadow& shadow = g_game.wanderingShadows[g_game.shadowDialogIndex];
                 if (PtInRect(&accept, POINT{x, y})) {
-                    shadow.state = WandererState::Accepted;
-                    shadow.age = 0.0f;
-                    g_game.pickupNotice = L"你收留了流浪影子，它正在走向领地";
+                    std::wstring reason;
+                    if (CanAcceptWanderingShadow(&reason)) {
+                        shadow.state = WandererState::Accepted;
+                        shadow.age = 0.0f;
+                        g_game.pickupNotice = L"你收留了流浪影子，它正在走向领地";
+                        g_game.shadowDialogIndex = -1;
+                    } else {
+                        g_game.pickupNotice = std::move(reason);
+                    }
                     g_game.pickupNoticeTime = 2.0f;
-                    g_game.shadowDialogIndex = -1;
                 } else if (PtInRect(&expel, POINT{x, y})) {
                     shadow.state = WandererState::Expelled;
                     shadow.age = 0.0f;
@@ -3636,6 +5267,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         if (npc.following) {
                             npc.following = false;
                             npc.inCombat = false;
+                            npc.evading = false;
+                            npc.threatMonster = -1;
+                            npc.evadeTime = 0.0f;
                             npc.moving = false;
                             npc.returningHome = !ActorProtectedByTerritory(npc.pos);
                             g_game.pickupNotice = npc.name + (npc.returningHome ? L" 已取消跟随，正在返回领地" : L" 已取消跟随");
@@ -3643,7 +5277,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             g_game.pickupNotice = L"最多只能有 4 名跟随者";
                         } else {
                             npc.following = true;
+                            npc.taskMode = NpcTaskMode::Idle;
+                            npc.facilityId.clear();
+                            npc.gatheringObjectId.clear();
+                            npc.workMap = g_currentScenePath.filename().wstring();
                             npc.returningHome = false;
+                            npc.inCombat = false;
+                            npc.evading = false;
+                            npc.threatMonster = -1;
+                            npc.evadeTime = 0.0f;
                             npc.moving = Distance(npc.pos, g_game.player.pos) > kNpcFollowStartDistance;
                             g_game.pickupNotice = npc.name + L" 已开始跟随";
                         }
@@ -3708,7 +5350,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (PointInInventoryPanel(client, x, y)) {
             return 0;
         }
-        if (g_game.inventory.heldItem.id == kBuildingStoneId) {
+        if (HeldSpiritSkill(1)) {
             const POINT tile = ScreenToTile(x, y);
             if (g_game.inventory.placingAnchor) {
                 PlaceBuildingAtPreview();
@@ -3730,7 +5372,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
-        if (g_game.inventory.heldItem.id == kGatheringStoneId) StartGathering();
+        if (HeldSpiritSkill(0)) StartGathering();
         else StartAttack();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -3805,7 +5447,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_game.npcContextIndex = -1;
         }
         if (g_screen == AppScreen::Playing && !g_game.inventory.open &&
-            g_game.inventory.heldItem.id == kBuildingStoneId && HasTerritoryAnchor()) {
+            HeldSpiritSkill(1) && HasTerritoryAnchor()) {
             g_game.inventory.selectingTerritory = true;
             g_game.inventory.territoryStartTile = ScreenToTile(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             g_game.inventory.territoryEndTile = g_game.inventory.territoryStartTile;

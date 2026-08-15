@@ -1,0 +1,13 @@
+{
+  "id": "potato",
+  "display_name": "土豆",
+  "max_stack": 99,
+  "color": "#a77c4f",
+  "icon": "items/potato/icon.png",
+  "world_image": "items/potato/world.png",
+  "source": "采集土豆获得",
+  "category": "crop",
+  "properties": {
+    "food": 1
+  }
+}

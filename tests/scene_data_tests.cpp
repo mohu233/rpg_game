@@ -197,6 +197,26 @@ int main(int argc, char** argv) {
     saveRequest.heldItemCount = 1;
     saveRequest.selectedHotbar = 3;
     saveRequest.followerNpcIndices = {1, 3};
+    saveRequest.territoryLevel = 2;
+    saveRequest.territoryStability = 67.5f;
+    saveRequest.territoryDayProgress = 0.625f;
+    saveRequest.territoryDaysPassed = 9;
+    saveRequest.exploredMaps.push_back({L"veil_lands.json", 9, {1, 0, 1, 1, 0, 0, 1, 0, 1}});
+    saveRequest.exploredMaps.push_back({L"ancient_altar.json", 5, {0, 1, 0, 1, 1}});
+    rpg::SaveGameInfo::ResidentEntry worker;
+    worker.name = L"青栀";
+    worker.x = 144.0f;
+    worker.y = 192.0f;
+    worker.spiritStoneMask = 5;
+    worker.health = 52;
+    worker.affinity = 73;
+    worker.personality = L"勤勉";
+    worker.taskMode = 2;
+    worker.gatheringTarget = "exotic_wood";
+    worker.workMap = L"veil_lands.json";
+    worker.cargo.push_back({0, "exotic_wood", 12});
+    worker.cargo.push_back({4, "stone", 7});
+    saveRequest.residents.push_back(worker);
     if (!rpg::CreateSaveGame(savesRoot, saveRequest, &error)) {
         return Fail("failed to create save game: " + error);
     }
@@ -209,8 +229,16 @@ int main(int argc, char** argv) {
         saveDirectory / L"maps" / layers.front().fileName,
         savedFirstLayer,
         &error);
+    std::ifstream savedJsonFile(saveDirectory / L"save.json", std::ios::binary);
+    const std::string savedJson{std::istreambuf_iterator<char>(savedJsonFile), std::istreambuf_iterator<char>()};
+    savedJsonFile.close();
+    const bool saveDeleted = rpg::DeleteSaveGame(savesRoot, saveDirectory, &error);
+    const bool saveStillExists = std::filesystem::exists(saveDirectory);
+    const bool rootDeletionRejected = !rpg::DeleteSaveGame(savesRoot, savesRoot, &error);
+    const bool rootStillExists = std::filesystem::exists(savesRoot);
     std::filesystem::remove_all(savesRoot, removeError);
-    if (!saveLoaded || !layerLoaded || listedSaves.size() != 1 ||
+    if (!saveLoaded || !layerLoaded || !saveDeleted || saveStillExists || !rootDeletionRejected ||
+        !rootStillExists || listedSaves.size() != 1 ||
         loadedSave.name != saveRequest.name ||
         loadedSave.difficulty != rpg::GameDifficulty::Easy ||
         !NearlyEqual(loadedSave.resourceMultiplier, 1.5f) ||
@@ -220,6 +248,29 @@ int main(int argc, char** argv) {
         loadedSave.heldItemId != "small_potion" || loadedSave.heldItemCount != 1 ||
         loadedSave.selectedHotbar != 3 ||
         loadedSave.followerNpcIndices != std::vector<int>({1, 3}) ||
+        loadedSave.territoryLevel != 2 ||
+        !NearlyEqual(loadedSave.territoryStability, 67.5f) ||
+        !NearlyEqual(loadedSave.territoryDayProgress, 0.625f) ||
+        loadedSave.territoryDaysPassed != 9 ||
+        loadedSave.exploredMaps.size() != 2 ||
+        loadedSave.exploredMaps[0].mapName != L"veil_lands.json" ||
+        loadedSave.exploredMaps[0].tiles != std::vector<std::uint8_t>({1, 0, 1, 1, 0, 0, 1, 0, 1}) ||
+        loadedSave.exploredMaps[1].mapName != L"ancient_altar.json" ||
+        loadedSave.exploredMaps[1].tiles != std::vector<std::uint8_t>({0, 1, 0, 1, 1}) ||
+        loadedSave.residents.size() != 1 ||
+        loadedSave.residents[0].taskMode != 2 ||
+        loadedSave.residents[0].gatheringTarget != "exotic_wood" ||
+        loadedSave.residents[0].workMap != L"veil_lands.json" ||
+        loadedSave.residents[0].cargo.size() != 2 ||
+        loadedSave.residents[0].cargo[0].slot != 0 ||
+        loadedSave.residents[0].cargo[0].itemId != "exotic_wood" ||
+        loadedSave.residents[0].cargo[0].count != 12 ||
+        loadedSave.residents[0].cargo[1].slot != 4 ||
+        loadedSave.residents[0].cargo[1].itemId != "stone" ||
+        loadedSave.residents[0].cargo[1].count != 7 ||
+        savedJson.find("\"explored_maps\"") == std::string::npos ||
+        savedJson.find("\"bits\": \"b28\"") == std::string::npos ||
+        savedJson.find("\"bits\": \"58\"") == std::string::npos ||
         savedFirstLayer.mapWidth != layers.front().minSize ||
         savedFirstLayer.mapHeight != layers.front().minSize) {
         return Fail("save game generation or round trip failed");

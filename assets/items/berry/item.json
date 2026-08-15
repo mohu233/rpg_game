@@ -1,0 +1,13 @@
+{
+  "id": "berry",
+  "display_name": "浆果",
+  "max_stack": 50,
+  "color": "#b9475e",
+  "icon": "items/berry/icon.png",
+  "world_image": "items/berry/world.png",
+  "source": "采集浆果丛或击杀怪物获得",
+  "category": "plant",
+  "properties": {
+    "food": 1
+  }
+}

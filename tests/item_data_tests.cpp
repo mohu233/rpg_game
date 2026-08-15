@@ -9,9 +9,26 @@ int main() {
         std::cerr << "failed to load item definitions: " << error << '\n';
         return 1;
     }
-    if (rpg::ItemDefs().size() != 9) {
-        std::cerr << "expected nine item definitions\n";
+    if (rpg::ItemDefs().size() != 41) {
+        std::cerr << "expected 41 item definitions\n";
         return 1;
+    }
+
+    constexpr const char* gameplayItems[] = {
+        "wood", "exotic_wood", "stone", "iron_ore", "copper_ore", "silver_ore", "gold_ore",
+        "ruby", "emerald", "sapphire", "topaz", "amethyst", "anchor_fragment", "exotic_ore",
+        "healing_herb", "berry", "wheat", "fodder", "rice", "corn", "potato", "sweet_potato", "cabbage",
+        "iron_ingot", "copper_ingot", "silver_ingot", "gold_ingot",
+        "gathering_stone", "gathering_stone_ii", "gathering_stone_iii",
+        "combat_stone", "combat_stone_ii", "combat_stone_iii",
+        "building_stone", "building_stone_ii", "building_stone_iii", "small_potion",
+    };
+    for (const char* id : gameplayItems) {
+        const rpg::ItemDef* item = rpg::FindItemDef(id);
+        if (!item || item->iconPath.empty() || item->worldImagePath.empty()) {
+            std::cerr << "missing gameplay item or image: " << id << '\n';
+            return 1;
+        }
     }
 
     const rpg::ItemDef* potion = rpg::FindItemDef("small_potion");
@@ -21,7 +38,9 @@ int main() {
     const rpg::ItemDef* buildingStone = rpg::FindItemDef("building_stone");
     const rpg::ItemDef* combatStone = rpg::FindItemDef("combat_stone");
     const rpg::ItemDef* territoryAnchor = rpg::FindItemDef("territory_anchor");
-    if (!potion || potion->maxStack != 20 || potion->properties.at("heal") != 25.0f ||
+    const rpg::ItemDef* cottage = rpg::FindItemDef("cottage_4x3");
+    const rpg::ItemDef* teleportPoint = rpg::FindItemDef("teleport_point");
+    if (!potion || potion->maxStack != 20 || potion->properties.at("heal") != 30.0f ||
         potion->iconPath.empty() || potion->worldImagePath.empty()) {
         std::cerr << "small_potion data mismatch\n";
         return 1;
@@ -42,6 +61,21 @@ int main() {
     }
     if (!territoryAnchor || territoryAnchor->properties.at("territory_radius") != 3.0f) {
         std::cerr << "territory anchor data mismatch\n";
+        return 1;
+    }
+    const rpg::ItemDef* gatheringStoneIII = rpg::FindItemDef("gathering_stone_iii");
+    const rpg::ItemDef* combatStoneIII = rpg::FindItemDef("combat_stone_iii");
+    const rpg::ItemDef* buildingStoneIII = rpg::FindItemDef("building_stone_iii");
+    if (!gatheringStoneIII || gatheringStoneIII->properties.at("stone_tier") != 3.0f ||
+        !combatStoneIII || combatStoneIII->properties.at("life_steal") != 10.0f ||
+        !buildingStoneIII || buildingStoneIII->properties.at("teleport_building") != 1.0f) {
+        std::cerr << "tier-three spirit stone data mismatch\n";
+        return 1;
+    }
+    if (!cottage || cottage->maxStack != 1 || cottage->properties.at("building") != 1.0f || cottage->iconPath.empty() ||
+        !teleportPoint || teleportPoint->maxStack != 1 || teleportPoint->properties.at("building") != 1.0f ||
+        teleportPoint->iconPath.empty()) {
+        std::cerr << "workbench building item data mismatch\n";
         return 1;
     }
     return 0;

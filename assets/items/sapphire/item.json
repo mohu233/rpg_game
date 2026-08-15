@@ -1,0 +1,13 @@
+{
+  "id": "sapphire",
+  "display_name": "蓝宝石",
+  "max_stack": 20,
+  "color": "#397fd3",
+  "icon": "items/sapphire/icon.png",
+  "world_image": "items/sapphire/world.png",
+  "source": "挖掘任意矿石小概率获得",
+  "category": "gem",
+  "properties": {
+    "rarity": 3
+  }
+}

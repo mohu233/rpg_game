@@ -1,0 +1,655 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "wood",
+      "display_name": "木头",
+      "category": "wood",
+      "max_stack": 99,
+      "source": "砍伐树木获得",
+      "properties": {
+        "material_grade": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "exotic_wood",
+      "display_name": "特异木头",
+      "category": "wood",
+      "max_stack": 99,
+      "source": "砍伐特异树木获得",
+      "properties": {
+        "material_grade": 2
+      },
+      "recipe": null
+    },
+    {
+      "id": "stone",
+      "display_name": "石头",
+      "category": "stone",
+      "max_stack": 99,
+      "source": "挖掘石头获得",
+      "properties": {
+        "material_grade": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "iron_ore",
+      "display_name": "铁矿石",
+      "category": "ore",
+      "max_stack": 50,
+      "source": "挖掘铁矿石获得",
+      "properties": {
+        "material_grade": 1,
+        "value": 8,
+        "weight": 2.5
+      },
+      "recipe": null
+    },
+    {
+      "id": "copper_ore",
+      "display_name": "铜矿石",
+      "category": "ore",
+      "max_stack": 50,
+      "source": "挖掘铜矿石获得",
+      "properties": {
+        "material_grade": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "silver_ore",
+      "display_name": "银矿石",
+      "category": "ore",
+      "max_stack": 50,
+      "source": "挖掘银矿石获得",
+      "properties": {
+        "material_grade": 2
+      },
+      "recipe": null
+    },
+    {
+      "id": "gold_ore",
+      "display_name": "金矿石",
+      "category": "ore",
+      "max_stack": 50,
+      "source": "挖掘金矿石获得",
+      "properties": {
+        "material_grade": 2
+      },
+      "recipe": null
+    },
+    {
+      "id": "ruby",
+      "display_name": "红宝石",
+      "category": "gem",
+      "max_stack": 20,
+      "source": "挖掘任意矿石小概率获得",
+      "properties": {
+        "rarity": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "emerald",
+      "display_name": "绿宝石",
+      "category": "gem",
+      "max_stack": 20,
+      "source": "挖掘任意矿石小概率获得",
+      "properties": {
+        "rarity": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "sapphire",
+      "display_name": "蓝宝石",
+      "category": "gem",
+      "max_stack": 20,
+      "source": "挖掘任意矿石小概率获得",
+      "properties": {
+        "rarity": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "topaz",
+      "display_name": "黄宝石",
+      "category": "gem",
+      "max_stack": 20,
+      "source": "挖掘任意矿石小概率获得",
+      "properties": {
+        "rarity": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "amethyst",
+      "display_name": "紫宝石",
+      "category": "gem",
+      "max_stack": 20,
+      "source": "挖掘任意矿石小概率获得",
+      "properties": {
+        "rarity": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "anchor_fragment",
+      "display_name": "锚点碎片",
+      "category": "fragment",
+      "max_stack": 10,
+      "source": "击杀怪物极低概率获得",
+      "properties": {
+        "rarity": 5
+      },
+      "recipe": null
+    },
+    {
+      "id": "exotic_ore",
+      "display_name": "特异矿石",
+      "category": "ore",
+      "max_stack": 50,
+      "source": "挖掘特异矿石获得",
+      "properties": {
+        "material_grade": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "healing_herb",
+      "display_name": "草药",
+      "category": "plant",
+      "max_stack": 50,
+      "source": "采集草药苗或击杀怪物获得",
+      "properties": {
+        "material_grade": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "berry",
+      "display_name": "浆果",
+      "category": "plant",
+      "max_stack": 50,
+      "source": "采集浆果丛或击杀怪物获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "wheat",
+      "display_name": "小麦",
+      "category": "crop",
+      "max_stack": 99,
+      "source": "采集小麦或击杀怪物获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "fodder",
+      "display_name": "草料",
+      "category": "plant",
+      "max_stack": 99,
+      "source": "采集草获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "rice",
+      "display_name": "水稻",
+      "category": "crop",
+      "max_stack": 99,
+      "source": "采集水稻获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "corn",
+      "display_name": "玉米",
+      "category": "crop",
+      "max_stack": 99,
+      "source": "采集玉米获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "potato",
+      "display_name": "土豆",
+      "category": "crop",
+      "max_stack": 99,
+      "source": "采集土豆获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "sweet_potato",
+      "display_name": "红薯",
+      "category": "crop",
+      "max_stack": 99,
+      "source": "采集红薯获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "cabbage",
+      "display_name": "白菜",
+      "category": "crop",
+      "max_stack": 99,
+      "source": "采集白菜获得",
+      "properties": {
+        "food": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "iron_ingot",
+      "display_name": "铁锭",
+      "category": "ingot",
+      "max_stack": 50,
+      "source": "熔炉合成",
+      "properties": {
+        "material_grade": 2
+      },
+      "recipe": {
+        "station": "furnace",
+        "ingredients": [
+          {
+            "item": "iron_ore",
+            "count": 2
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "copper_ingot",
+      "display_name": "铜锭",
+      "category": "ingot",
+      "max_stack": 50,
+      "source": "熔炉合成",
+      "properties": {
+        "material_grade": 2
+      },
+      "recipe": {
+        "station": "furnace",
+        "ingredients": [
+          {
+            "item": "copper_ore",
+            "count": 2
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "silver_ingot",
+      "display_name": "银锭",
+      "category": "ingot",
+      "max_stack": 50,
+      "source": "熔炉合成",
+      "properties": {
+        "material_grade": 3
+      },
+      "recipe": {
+        "station": "furnace",
+        "ingredients": [
+          {
+            "item": "silver_ore",
+            "count": 2
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "gold_ingot",
+      "display_name": "金锭",
+      "category": "ingot",
+      "max_stack": 50,
+      "source": "熔炉合成",
+      "properties": {
+        "material_grade": 3
+      },
+      "recipe": {
+        "station": "furnace",
+        "ingredients": [
+          {
+            "item": "gold_ore",
+            "count": 2
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "gathering_stone",
+      "display_name": "采集石I",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 1,
+        "stone_tier": 1
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "emerald",
+            "count": 1
+          },
+          {
+            "item": "stone",
+            "count": 1
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "gathering_stone_ii",
+      "display_name": "采集石II",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 1,
+        "stone_tier": 2,
+        "drop_rate_bonus": 15
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "emerald",
+            "count": 1
+          },
+          {
+            "item": "exotic_ore",
+            "count": 1
+          },
+          {
+            "item": "exotic_wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "gathering_stone_iii",
+      "display_name": "采集石III",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 1,
+        "stone_tier": 3,
+        "drop_rate_bonus": 35,
+        "rare_drop_bonus": 20
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "emerald",
+            "count": 2
+          },
+          {
+            "item": "exotic_ore",
+            "count": 1
+          },
+          {
+            "item": "exotic_wood",
+            "count": 1
+          },
+          {
+            "item": "anchor_fragment",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "combat_stone",
+      "display_name": "战斗石I",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 3,
+        "stone_tier": 1,
+        "attack_bonus": 0
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "ruby",
+            "count": 1
+          },
+          {
+            "item": "stone",
+            "count": 1
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "combat_stone_ii",
+      "display_name": "战斗石II",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 3,
+        "stone_tier": 2,
+        "attack_bonus": 25,
+        "ultimate": 1
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "ruby",
+            "count": 1
+          },
+          {
+            "item": "exotic_ore",
+            "count": 1
+          },
+          {
+            "item": "exotic_wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "combat_stone_iii",
+      "display_name": "战斗石III",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 3,
+        "stone_tier": 3,
+        "attack_bonus": 50,
+        "life_steal": 10
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "ruby",
+            "count": 2
+          },
+          {
+            "item": "exotic_ore",
+            "count": 1
+          },
+          {
+            "item": "exotic_wood",
+            "count": 1
+          },
+          {
+            "item": "anchor_fragment",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "building_stone",
+      "display_name": "建造石I",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 2,
+        "stone_tier": 1,
+        "build_discount": 0
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "topaz",
+            "count": 1
+          },
+          {
+            "item": "stone",
+            "count": 1
+          },
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "building_stone_ii",
+      "display_name": "建造石II",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 2,
+        "stone_tier": 2,
+        "build_discount": 15
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "topaz",
+            "count": 1
+          },
+          {
+            "item": "exotic_ore",
+            "count": 1
+          },
+          {
+            "item": "exotic_wood",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "building_stone_iii",
+      "display_name": "建造石III",
+      "category": "spirit",
+      "max_stack": 1,
+      "source": "工作台合成",
+      "properties": {
+        "spirit_skill": 2,
+        "stone_tier": 3,
+        "build_discount": 35,
+        "teleport_building": 1
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "topaz",
+            "count": 2
+          },
+          {
+            "item": "exotic_ore",
+            "count": 1
+          },
+          {
+            "item": "exotic_wood",
+            "count": 1
+          },
+          {
+            "item": "anchor_fragment",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "small_potion",
+      "display_name": "治疗药水",
+      "category": "potion",
+      "max_stack": 20,
+      "source": "工作台合成",
+      "properties": {
+        "heal": 30
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "healing_herb",
+            "count": 1
+          },
+          {
+            "item": "fodder",
+            "count": 1
+          },
+          {
+            "item": "berry",
+            "count": 1
+          }
+        ]
+      }
+    }
+  ]
+}

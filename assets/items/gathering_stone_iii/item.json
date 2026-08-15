@@ -1,0 +1,37 @@
+{
+  "id": "gathering_stone_iii",
+  "display_name": "采集石III",
+  "max_stack": 1,
+  "color": "#66d99a",
+  "icon": "items/gathering_stone_iii/icon.png",
+  "world_image": "items/gathering_stone_iii/world.png",
+  "source": "工作台合成",
+  "category": "spirit",
+  "properties": {
+    "spirit_skill": 1,
+    "stone_tier": 3,
+    "drop_rate_bonus": 35,
+    "rare_drop_bonus": 20
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "emerald",
+        "count": 2
+      },
+      {
+        "item": "exotic_ore",
+        "count": 1
+      },
+      {
+        "item": "exotic_wood",
+        "count": 1
+      },
+      {
+        "item": "anchor_fragment",
+        "count": 1
+      }
+    ]
+  }
+}

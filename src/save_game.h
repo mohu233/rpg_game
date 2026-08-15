@@ -30,6 +30,17 @@ struct SaveGameInfo {
         int health = 60;
         int affinity = 50;
         std::wstring personality = L"谨慎";
+        int taskMode = 0;
+        std::string gatheringTarget = "any";
+        std::string facilityId;
+        std::wstring workMap;
+        std::vector<InventoryEntry> cargo;
+    };
+
+    struct ExploredMapEntry {
+        std::wstring mapName;
+        int tileCount = 0;
+        std::vector<std::uint8_t> tiles;
     };
 
     std::wstring name;
@@ -44,6 +55,12 @@ struct SaveGameInfo {
     std::vector<int> followerNpcIndices;
     std::vector<ResidentEntry> residents;
     std::vector<InventoryEntry> anchorStorage;
+    std::vector<std::string> unlockedBlueprints{"territory_anchor"};
+    int territoryLevel = 1;
+    float territoryStability = 100.0f;
+    float territoryDayProgress = 0.0f;
+    int territoryDaysPassed = 0;
+    std::vector<ExploredMapEntry> exploredMaps;
 };
 
 std::filesystem::path DefaultSavesRoot();
@@ -53,6 +70,9 @@ std::vector<SaveGameInfo> ListSaveGames(const std::filesystem::path& root);
 bool CreateSaveGame(const std::filesystem::path& root, const SaveGameInfo& info, std::string* error = nullptr);
 bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, std::string* error = nullptr);
 bool SaveGameState(const std::filesystem::path& directory, const SaveGameInfo& info, std::string* error = nullptr);
+bool DeleteSaveGame(const std::filesystem::path& directory, std::string* error = nullptr);
+bool DeleteSaveGame(const std::filesystem::path& root, const std::filesystem::path& directory,
+                    std::string* error = nullptr);
 const wchar_t* DifficultyName(GameDifficulty difficulty);
 
 } // namespace rpg

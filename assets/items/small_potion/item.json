@@ -1,13 +1,30 @@
 {
   "id": "small_potion",
-  "display_name": "小型生命药水",
+  "display_name": "治疗药水",
   "max_stack": 20,
-  "color": "#d65f69",
+  "color": "#68b8c4",
   "icon": "items/small_potion/icon.png",
   "world_image": "items/small_potion/world.png",
+  "source": "工作台合成",
+  "category": "potion",
   "properties": {
-    "heal": 25,
-    "value": 12,
-    "weight": 0.2
+    "heal": 30
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "healing_herb",
+        "count": 1
+      },
+      {
+        "item": "fodder",
+        "count": 1
+      },
+      {
+        "item": "berry",
+        "count": 1
+      }
+    ]
   }
 }

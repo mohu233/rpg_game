@@ -1,0 +1,37 @@
+{
+  "id": "combat_stone_iii",
+  "display_name": "战斗石III",
+  "max_stack": 1,
+  "color": "#e86a71",
+  "icon": "items/combat_stone_iii/icon.png",
+  "world_image": "items/combat_stone_iii/world.png",
+  "source": "工作台合成",
+  "category": "spirit",
+  "properties": {
+    "spirit_skill": 3,
+    "stone_tier": 3,
+    "attack_bonus": 50,
+    "life_steal": 10
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "ruby",
+        "count": 2
+      },
+      {
+        "item": "exotic_ore",
+        "count": 1
+      },
+      {
+        "item": "exotic_wood",
+        "count": 1
+      },
+      {
+        "item": "anchor_fragment",
+        "count": 1
+      }
+    ]
+  }
+}

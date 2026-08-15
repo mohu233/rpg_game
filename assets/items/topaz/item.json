@@ -1,0 +1,13 @@
+{
+  "id": "topaz",
+  "display_name": "黄宝石",
+  "max_stack": 20,
+  "color": "#e1b83f",
+  "icon": "items/topaz/icon.png",
+  "world_image": "items/topaz/world.png",
+  "source": "挖掘任意矿石小概率获得",
+  "category": "gem",
+  "properties": {
+    "rarity": 3
+  }
+}

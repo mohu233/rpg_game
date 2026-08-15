@@ -1,0 +1,11 @@
+{
+  "id": "cottage_4x3",
+  "display_name": "4x3 小屋",
+  "max_stack": 1,
+  "color": "#9b7655",
+  "icon": "objects/cottage_3x4/cottage_4x3.png",
+  "world_image": "objects/cottage_3x4/cottage_4x3.png",
+  "properties": {
+    "building": 1
+  }
+}

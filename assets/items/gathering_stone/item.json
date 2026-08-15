@@ -1,9 +1,31 @@
 {
   "id": "gathering_stone",
-  "display_name": "采集石",
+  "display_name": "采集石I",
   "max_stack": 1,
   "color": "#4f9f69",
+  "icon": "items/gathering_stone/icon.png",
+  "world_image": "items/gathering_stone/world.png",
+  "source": "工作台合成",
+  "category": "spirit",
   "properties": {
-    "spirit_skill": 1
+    "spirit_skill": 1,
+    "stone_tier": 1
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "emerald",
+        "count": 1
+      },
+      {
+        "item": "stone",
+        "count": 1
+      },
+      {
+        "item": "wood",
+        "count": 1
+      }
+    ]
   }
 }

@@ -1,0 +1,13 @@
+{
+  "id": "gold_ore",
+  "display_name": "金矿石",
+  "max_stack": 50,
+  "color": "#d7ad3f",
+  "icon": "items/gold_ore/icon.png",
+  "world_image": "items/gold_ore/world.png",
+  "source": "挖掘金矿石获得",
+  "category": "ore",
+  "properties": {
+    "material_grade": 2
+  }
+}

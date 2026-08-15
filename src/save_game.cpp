@@ -46,6 +46,60 @@ GameDifficulty ParseDifficulty(const std::string& value) {
     return GameDifficulty::Normal;
 }
 
+std::string EncodeExploredBits(const std::vector<std::uint8_t>& tiles, int tileCount) {
+    static constexpr char digits[] = "0123456789abcdef";
+    const int count = std::clamp(tileCount, 0, kMaximumMapDimension * kMaximumMapDimension);
+    std::string encoded((count + 3) / 4, '0');
+    for (int i = 0; i < count && i < static_cast<int>(tiles.size()); ++i) {
+        if (!tiles[i]) continue;
+        const int shift = (3 - (i % 4)) * 1;
+        const int current = encoded[i / 4] >= 'a' ? encoded[i / 4] - 'a' + 10 : encoded[i / 4] - '0';
+        encoded[i / 4] = digits[current | (1 << shift)];
+    }
+    return encoded;
+}
+
+int HexDigit(char value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+std::vector<std::uint8_t> DecodeExploredBits(const std::string& encoded, int tileCount) {
+    const int count = std::clamp(tileCount, 0, kMaximumMapDimension * kMaximumMapDimension);
+    std::vector<std::uint8_t> tiles(count, 0);
+    for (int i = 0; i < count && i / 4 < static_cast<int>(encoded.size()); ++i) {
+        const int nibble = HexDigit(encoded[i / 4]);
+        if (nibble < 0) break;
+        tiles[i] = (nibble & (1 << (3 - i % 4))) != 0 ? 1 : 0;
+    }
+    return tiles;
+}
+
+std::string EncodeResidentCargo(const std::vector<SaveGameInfo::InventoryEntry>& cargo) {
+    std::ostringstream encoded;
+    bool first = true;
+    for (const SaveGameInfo::InventoryEntry& entry : cargo) {
+        if (entry.slot < 0 || entry.slot >= 10 || entry.itemId.empty() || entry.count <= 0) continue;
+        if (!first) encoded << '|';
+        encoded << entry.slot << ':' << entry.itemId << ':' << entry.count;
+        first = false;
+    }
+    return encoded.str();
+}
+
+std::vector<SaveGameInfo::InventoryEntry> DecodeResidentCargo(const std::string& encoded) {
+    std::vector<SaveGameInfo::InventoryEntry> cargo;
+    const std::regex entryPattern("([0-9]+):([A-Za-z0-9_]+):([0-9]+)");
+    for (std::sregex_iterator it(encoded.begin(), encoded.end(), entryPattern), end; it != end; ++it) {
+        const int slot = std::stoi((*it)[1].str());
+        const int count = std::stoi((*it)[3].str());
+        if (slot >= 0 && slot < 10 && count > 0) cargo.push_back({slot, (*it)[2].str(), count});
+    }
+    return cargo;
+}
+
 int DifficultySize(const WorldLayerDef& layer, GameDifficulty difficulty) {
     if (difficulty == GameDifficulty::Easy) return layer.minSize;
     if (difficulty == GameDifficulty::Hard) return layer.maxSize;
@@ -83,7 +137,7 @@ bool SaveGameState(const std::filesystem::path& directory, const SaveGameInfo& i
         return false;
     }
     output << "{\n"
-           << "  \"version\": 1,\n"
+           << "  \"version\": 5,\n"
            << "  \"name\": \"" << std::filesystem::path(info.name).generic_u8string() << "\",\n"
            << "  \"difficulty\": \"" << DifficultyId(info.difficulty) << "\",\n"
            << "  \"resource_multiplier\": " << info.resourceMultiplier << ",\n"
@@ -93,6 +147,10 @@ bool SaveGameState(const std::filesystem::path& directory, const SaveGameInfo& i
            << "  \"selected_hotbar\": " << info.selectedHotbar << ",\n"
            << "  \"held_item\": \"" << info.heldItemId << "\",\n"
            << "  \"held_count\": " << info.heldItemCount << ",\n"
+           << "  \"territory_level\": " << info.territoryLevel << ",\n"
+           << "  \"territory_stability\": " << info.territoryStability << ",\n"
+           << "  \"territory_day_progress\": " << info.territoryDayProgress << ",\n"
+           << "  \"territory_days_passed\": " << info.territoryDaysPassed << ",\n"
            << "  \"followers\": [";
     for (size_t i = 0; i < info.followerNpcIndices.size(); ++i) {
         output << info.followerNpcIndices[i]
@@ -108,8 +166,28 @@ bool SaveGameState(const std::filesystem::path& directory, const SaveGameInfo& i
                << ", \"following\": " << (resident.following ? 1 : 0)
                << ", \"health\": " << resident.health
                << ", \"affinity\": " << resident.affinity
-               << ", \"personality\": \"" << std::filesystem::path(resident.personality).generic_u8string() << "\"}"
+               << ", \"personality\": \"" << std::filesystem::path(resident.personality).generic_u8string()
+               << "\", \"task\": " << resident.taskMode
+               << ", \"gather_target\": \"" << resident.gatheringTarget
+               << "\", \"facility_id\": \"" << resident.facilityId
+               << "\", \"work_map\": \"" << std::filesystem::path(resident.workMap).generic_u8string()
+               << "\", \"cargo\": \"" << EncodeResidentCargo(resident.cargo) << "\"}"
                << (i + 1 == info.residents.size() ? "\n" : ",\n");
+    }
+    output << "  ],\n"
+           << "  \"unlocked_blueprints\": [";
+    for (size_t i = 0; i < info.unlockedBlueprints.size(); ++i) {
+        output << "\"" << info.unlockedBlueprints[i] << "\""
+               << (i + 1 == info.unlockedBlueprints.size() ? "" : ", ");
+    }
+    output << "],\n"
+           << "  \"explored_maps\": [\n";
+    for (size_t i = 0; i < info.exploredMaps.size(); ++i) {
+        const SaveGameInfo::ExploredMapEntry& explored = info.exploredMaps[i];
+        output << "    {\"map\": \"" << std::filesystem::path(explored.mapName).generic_u8string()
+               << "\", \"tile_count\": " << explored.tileCount
+               << ", \"bits\": \"" << EncodeExploredBits(explored.tiles, explored.tileCount) << "\"}"
+               << (i + 1 == info.exploredMaps.size() ? "\n" : ",\n");
     }
     output << "  ],\n"
            << "  \"anchor_storage\": [\n";
@@ -132,6 +210,31 @@ bool SaveGameState(const std::filesystem::path& directory, const SaveGameInfo& i
     return true;
 }
 
+bool DeleteSaveGame(const std::filesystem::path& root, const std::filesystem::path& directory, std::string* error) {
+    std::error_code ec;
+    const std::filesystem::path savesRoot = std::filesystem::weakly_canonical(root, ec);
+    if (ec) {
+        if (error) *error = "failed to resolve saves root";
+        return false;
+    }
+    const std::filesystem::path target = std::filesystem::weakly_canonical(directory, ec);
+    if (ec || target.empty() || target == savesRoot || target.parent_path() != savesRoot ||
+        !std::filesystem::is_directory(target, ec) || !std::filesystem::is_regular_file(target / L"save.json", ec)) {
+        if (error) *error = "refusing to delete path outside saves root";
+        return false;
+    }
+    std::filesystem::remove_all(target, ec);
+    if (ec || std::filesystem::exists(target, ec)) {
+        if (error) *error = "failed to delete save directory";
+        return false;
+    }
+    return true;
+}
+
+bool DeleteSaveGame(const std::filesystem::path& directory, std::string* error) {
+    return DeleteSaveGame(DefaultSavesRoot(), directory, error);
+}
+
 bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, std::string* error) {
     const std::string text = ReadAll(directory / L"save.json");
     if (text.empty()) {
@@ -146,6 +249,10 @@ bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, st
     info.selectedHotbar = std::clamp(static_cast<int>(FindNumber(text, "selected_hotbar", 0.0f)), 0, 9);
     info.heldItemId = FindString(text, "held_item");
     info.heldItemCount = std::max(0, static_cast<int>(FindNumber(text, "held_count", 0.0f)));
+    info.territoryLevel = std::clamp(static_cast<int>(FindNumber(text, "territory_level", 1.0f)), 1, 4);
+    info.territoryStability = std::clamp(FindNumber(text, "territory_stability", 100.0f), 0.0f, 100.0f);
+    info.territoryDayProgress = std::clamp(FindNumber(text, "territory_day_progress", 0.0f), 0.0f, 0.9999f);
+    info.territoryDaysPassed = std::max(0, static_cast<int>(FindNumber(text, "territory_days_passed", 0.0f)));
     info.followerNpcIndices.clear();
     const std::regex followersPattern("\\\"followers\\\"\\s*:\\s*\\[([^\\]]*)\\]");
     std::smatch followersMatch;
@@ -166,7 +273,10 @@ bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, st
         "\\{\\s*\\\"name\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"x\\\"\\s*:\\s*(-?[0-9.]+)\\s*,\\s*"
         "\\\"y\\\"\\s*:\\s*(-?[0-9.]+)\\s*,\\s*\\\"stones\\\"\\s*:\\s*([0-7])\\s*,\\s*"
         "\\\"following\\\"\\s*:\\s*([01])\\s*,\\s*\\\"health\\\"\\s*:\\s*([0-9]+)"
-        "(?:\\s*,\\s*\\\"affinity\\\"\\s*:\\s*([0-9]+)\\s*,\\s*\\\"personality\\\"\\s*:\\s*\\\"([^\\\"]*)\\\")?\\s*\\}");
+        "(?:\\s*,\\s*\\\"affinity\\\"\\s*:\\s*([0-9]+)\\s*,\\s*\\\"personality\\\"\\s*:\\s*\\\"([^\\\"]*)\\\")?"
+        "(?:\\s*,\\s*\\\"task\\\"\\s*:\\s*([0-3])\\s*,\\s*\\\"gather_target\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"\\s*,\\s*"
+        "\\\"facility_id\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"\\s*,\\s*\\\"work_map\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"\\s*,\\s*"
+        "\\\"cargo\\\"\\s*:\\s*\\\"([^\\\"]*)\\\")?\\s*\\}");
     for (std::sregex_iterator it(text.begin(), text.end(), residentPattern), end; it != end; ++it) {
         SaveGameInfo::ResidentEntry resident;
         resident.name = std::filesystem::u8path((*it)[1].str()).wstring();
@@ -179,6 +289,12 @@ bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, st
         resident.personality = (*it)[8].matched
             ? std::filesystem::u8path((*it)[8].str()).wstring()
             : L"谨慎";
+        resident.taskMode = (*it)[9].matched ? std::clamp(std::stoi((*it)[9].str()), 0, 3) : 0;
+        resident.gatheringTarget = (*it)[10].matched && !(*it)[10].str().empty() ? (*it)[10].str() : "any";
+        resident.facilityId = (*it)[11].matched ? (*it)[11].str() : "";
+        resident.workMap = (*it)[12].matched ? std::filesystem::u8path((*it)[12].str()).wstring() : L"";
+        resident.cargo = (*it)[13].matched ? DecodeResidentCargo((*it)[13].str())
+                                           : std::vector<SaveGameInfo::InventoryEntry>{};
         info.residents.push_back(std::move(resident));
     }
     info.anchorStorage.clear();
@@ -190,6 +306,35 @@ bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, st
         if (slot >= 0 && slot < 100 && count > 0) {
             info.anchorStorage.push_back({slot, (*it)[2].str(), count});
         }
+    }
+    info.unlockedBlueprints.clear();
+    const std::regex blueprintsPattern("\\\"unlocked_blueprints\\\"\\s*:\\s*\\[([^\\]]*)\\]");
+    std::smatch blueprintsMatch;
+    if (std::regex_search(text, blueprintsMatch, blueprintsPattern)) {
+        const std::string values = blueprintsMatch[1].str();
+        const std::regex idPattern("\\\"([^\\\"]+)\\\"");
+        for (std::sregex_iterator it(values.begin(), values.end(), idPattern), end; it != end; ++it) {
+            const std::string id = (*it)[1].str();
+            if (std::find(info.unlockedBlueprints.begin(), info.unlockedBlueprints.end(), id) == info.unlockedBlueprints.end()) {
+                info.unlockedBlueprints.push_back(id);
+            }
+        }
+    }
+    if (std::find(info.unlockedBlueprints.begin(), info.unlockedBlueprints.end(), "territory_anchor") == info.unlockedBlueprints.end()) {
+        info.unlockedBlueprints.push_back("territory_anchor");
+    }
+    info.exploredMaps.clear();
+    const std::regex exploredPattern(
+        "\\{\\s*\\\"map\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"tile_count\\\"\\s*:\\s*([0-9]+)\\s*,\\s*"
+        "\\\"bits\\\"\\s*:\\s*\\\"([0-9a-fA-F]*)\\\"\\s*\\}");
+    for (std::sregex_iterator it(text.begin(), text.end(), exploredPattern), end; it != end; ++it) {
+        const int tileCount = std::clamp(std::stoi((*it)[2].str()), 0,
+                                         kMaximumMapDimension * kMaximumMapDimension);
+        SaveGameInfo::ExploredMapEntry explored;
+        explored.mapName = std::filesystem::u8path((*it)[1].str()).wstring();
+        explored.tileCount = tileCount;
+        explored.tiles = DecodeExploredBits((*it)[3].str(), tileCount);
+        info.exploredMaps.push_back(std::move(explored));
     }
     info.inventory.clear();
     const std::regex entryPattern(

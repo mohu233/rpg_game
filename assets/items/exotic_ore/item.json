@@ -1,0 +1,13 @@
+{
+  "id": "exotic_ore",
+  "display_name": "特异矿石",
+  "max_stack": 50,
+  "color": "#4e8e91",
+  "icon": "items/exotic_ore/icon.png",
+  "world_image": "items/exotic_ore/world.png",
+  "source": "挖掘特异矿石获得",
+  "category": "ore",
+  "properties": {
+    "material_grade": 3
+  }
+}

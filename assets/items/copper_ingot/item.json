@@ -1,0 +1,26 @@
+{
+  "id": "copper_ingot",
+  "display_name": "铜锭",
+  "max_stack": 50,
+  "color": "#cf7f4d",
+  "icon": "items/copper_ingot/icon.png",
+  "world_image": "items/copper_ingot/world.png",
+  "source": "熔炉合成",
+  "category": "ingot",
+  "properties": {
+    "material_grade": 2
+  },
+  "recipe": {
+    "station": "furnace",
+    "ingredients": [
+      {
+        "item": "copper_ore",
+        "count": 2
+      },
+      {
+        "item": "wood",
+        "count": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "silver_ore",
+  "display_name": "银矿石",
+  "max_stack": 50,
+  "color": "#b9c4c8",
+  "icon": "items/silver_ore/icon.png",
+  "world_image": "items/silver_ore/world.png",
+  "source": "挖掘银矿石获得",
+  "category": "ore",
+  "properties": {
+    "material_grade": 2
+  }
+}
