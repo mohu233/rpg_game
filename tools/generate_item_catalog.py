@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 ITEMS_ROOT = ROOT / "assets" / "items"
 OBJECTS_ROOT = ROOT / "assets" / "objects"
-CATALOG_PATH = ROOT / "assets" / "item_catalog.json"
+CATALOG_PATH = ITEMS_ROOT / "catalog.json"
 CONTACT_SHEET_PATH = ROOT / "outputs" / "item_icon_contact_sheet.png"
 
 
@@ -24,6 +24,29 @@ def item(item_id, name, color, category, max_stack, source, properties=None, rec
         "properties": properties or {},
         "recipe": recipe,
     }
+
+
+ITEM_CATEGORY_FOLDERS = {
+    "building": "buildings",
+    "crop": "crops",
+    "currency": "currency",
+    "fragment": "rare_materials",
+    "gem": "gems",
+    "ingot": "materials",
+    "ore": "raw_resources",
+    "plank": "materials",
+    "plant": "raw_resources",
+    "potion": "consumables",
+    "seed": "seeds",
+    "spirit": "spirit_stones",
+    "stone": "raw_resources",
+    "wood": "raw_resources",
+}
+
+
+def item_directory(definition):
+    group = ITEM_CATEGORY_FOLDERS.get(definition["category"], "misc")
+    return ITEMS_ROOT / group / definition["id"]
 
 
 def recipe(station, *ingredients, output_count=1):
@@ -246,7 +269,7 @@ def draw_building_world(definition, width_tiles, height_tiles, ground_overlay):
 
 def write_building_object(definition):
     width_tiles, height_tiles, ground_overlay = BUILDING_SPECS[definition["id"]]
-    object_dir = OBJECTS_ROOT / definition["id"]
+    object_dir = OBJECTS_ROOT / "buildings" / definition["id"]
     object_dir.mkdir(parents=True, exist_ok=True)
     image = draw_building_world(definition, width_tiles, height_tiles, ground_overlay)
     image_name = f"{definition['id']}.png"
@@ -277,15 +300,15 @@ def write_building_object(definition):
 
 
 def write_definition(definition):
-    item_dir = ITEMS_ROOT / definition["id"]
+    item_dir = item_directory(definition)
     item_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "id": definition["id"],
         "display_name": definition["display_name"],
         "max_stack": definition["max_stack"],
         "color": definition["color"],
-        "icon": f"items/{definition['id']}/icon.png",
-        "world_image": f"items/{definition['id']}/world.png",
+        "icon": f"items/{item_dir.relative_to(ITEMS_ROOT).as_posix()}/icon.png",
+        "world_image": f"items/{item_dir.relative_to(ITEMS_ROOT).as_posix()}/world.png",
         "source": definition["source"],
         "category": definition["category"],
         "properties": definition["properties"],
@@ -305,7 +328,10 @@ def main():
             write_building_object(definition)
     catalog_items = [{key: value for key, value in definition.items() if key != "color"} for definition in ITEMS]
     for item_id in EXTERNAL_ITEM_IDS:
-        external = json.loads((ITEMS_ROOT / item_id / "item.json").read_text(encoding="utf-8"))
+        matches = list(ITEMS_ROOT.rglob(f"{item_id}/item.json"))
+        if len(matches) != 1:
+            raise RuntimeError(f"expected one external definition for {item_id}, found {len(matches)}")
+        external = json.loads(matches[0].read_text(encoding="utf-8"))
         catalog_items.append({
             "id": external["id"],
             "display_name": external["display_name"],
@@ -325,7 +351,7 @@ def main():
     rows = (len(ITEMS) + columns - 1) // columns
     sheet = Image.new("RGBA", (columns * cell, rows * cell), (28, 34, 32, 255))
     for index, definition in enumerate(ITEMS):
-        icon = Image.open(ITEMS_ROOT / definition["id"] / "icon.png").convert("RGBA")
+        icon = Image.open(item_directory(definition) / "icon.png").convert("RGBA")
         x = (index % columns) * cell + (cell - icon.width) // 2
         y = (index // columns) * cell + (cell - icon.height) // 2
         sheet.alpha_composite(icon, (x, y))

@@ -1,0 +1,25 @@
+{
+  "id": "cabbage_seed",
+  "display_name": "白菜种子",
+  "max_stack": 99,
+  "color": "#689947",
+  "icon": "items/seeds/cabbage_seed/icon.png",
+  "world_image": "items/seeds/cabbage_seed/world.png",
+  "source": "白菜分解或击杀怪物获得",
+  "category": "seed",
+  "properties": {
+    "seed": 1,
+    "crop_days": 2,
+    "harvest_count": 2
+  },
+  "recipe": {
+    "station": "decompose",
+    "ingredients": [
+      {
+        "item": "cabbage",
+        "count": 1
+      }
+    ],
+    "output_count": 4
+  }
+}

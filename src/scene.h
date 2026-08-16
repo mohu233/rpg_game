@@ -102,6 +102,7 @@ struct Scene {
 
     int mapWidth = kMapWidth;
     int mapHeight = kMapHeight;
+    std::uint32_t terrainVariantSeed = 0;
     std::vector<std::string> naturalTerrain;
     std::vector<std::string> builtTerrain;
     std::vector<std::uint8_t> territory;

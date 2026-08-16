@@ -19,6 +19,7 @@ struct WorldLayerDef {
     float treeRate = 0.0f;
     float resourceRate = 0.0f;
     const char* terrainId = "grass";
+    std::array<float, 4> terrainRates{}; // grass, dirt, gravel, sand
 };
 
 const std::array<WorldLayerDef, 4>& WorldLayers();

@@ -97,8 +97,13 @@ function Draw-Coin($g) {
 }
 
 function Save-ItemTextures([string]$Id, [string]$Kind) {
-    $directory = Join-Path $OutputRoot $Id
-    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    $definition = Get-ChildItem -LiteralPath $OutputRoot -Recurse -File -Filter "item.json" |
+        Where-Object { (Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json).id -eq $Id } |
+        Select-Object -First 1
+    if (-not $definition) {
+        throw "Item definition not found: $Id"
+    }
+    $directory = $definition.DirectoryName
     $canvas = New-Canvas 64
     $icon = $canvas[0]
     $graphics = $canvas[1]

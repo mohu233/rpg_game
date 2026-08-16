@@ -1,0 +1,32 @@
+{
+  "id": "gathering_stone_ii",
+  "display_name": "采集石II",
+  "max_stack": 1,
+  "color": "#3fba79",
+  "icon": "items/spirit_stones/gathering_stone_ii/icon.png",
+  "world_image": "items/spirit_stones/gathering_stone_ii/world.png",
+  "source": "工作台合成",
+  "category": "spirit",
+  "properties": {
+    "spirit_skill": 1,
+    "stone_tier": 2,
+    "drop_rate_bonus": 15
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "emerald",
+        "count": 1
+      },
+      {
+        "item": "exotic_ore",
+        "count": 1
+      },
+      {
+        "item": "exotic_wood",
+        "count": 1
+      }
+    ]
+  }
+}

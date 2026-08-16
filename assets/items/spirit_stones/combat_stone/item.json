@@ -1,0 +1,32 @@
+{
+  "id": "combat_stone",
+  "display_name": "战斗石I",
+  "max_stack": 1,
+  "color": "#b64e52",
+  "icon": "items/spirit_stones/combat_stone/icon.png",
+  "world_image": "items/spirit_stones/combat_stone/world.png",
+  "source": "工作台合成",
+  "category": "spirit",
+  "properties": {
+    "spirit_skill": 3,
+    "stone_tier": 1,
+    "attack_bonus": 0
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "ruby",
+        "count": 1
+      },
+      {
+        "item": "stone",
+        "count": 1
+      },
+      {
+        "item": "wood",
+        "count": 1
+      }
+    ]
+  }
+}

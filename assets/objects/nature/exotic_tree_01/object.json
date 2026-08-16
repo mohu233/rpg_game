@@ -1,0 +1,18 @@
+{
+  "type": "exotic_tree_01",
+  "display_name": "特异树木 01",
+  "image": "exotic_tree_01.png",
+  "width": 251.0,
+  "height": 272.0,
+  "z_offset": 0.0,
+  "companion_type": "exotic_tree_01_shadow",
+  "collision": {
+    "shape": "rect",
+    "x": -32.0,
+    "y": -62.0,
+    "w": 64.0,
+    "h": 60.0,
+    "radius": 0.0,
+    "blocks": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "cabbage",
+  "display_name": "白菜",
+  "max_stack": 99,
+  "color": "#7fb75b",
+  "icon": "items/crops/cabbage/icon.png",
+  "world_image": "items/crops/cabbage/world.png",
+  "source": "采集白菜获得",
+  "category": "crop",
+  "properties": {
+    "food": 1
+  }
+}

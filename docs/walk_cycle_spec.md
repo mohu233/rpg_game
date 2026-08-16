@@ -1,6 +1,6 @@
 # Walk Cycle Sprite Contract
 
-Use `assets/player_walk_anchor.png` as the drawing template.
+Use `art_source/player/player_walk_anchor.png` as the drawing template.
 
 Runtime sheet:
 
@@ -31,7 +31,7 @@ Anchor notes:
 - Front/back frames can stay 4-frame loops, but should still include visible weight shift and opposite arm/leg motion.
 - Keep the body inside each 96x96 frame with a little padding for ears and tail.
 
-After replacing `assets/player_walk.png` with final art following this layout, run:
+After replacing `art_source/player/player_walk.png` with final art following this layout, run:
 
 ```text
 python tools/format_player_walk.py

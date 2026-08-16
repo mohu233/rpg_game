@@ -1,0 +1,13 @@
+{
+  "id": "healing_herb",
+  "display_name": "草药",
+  "max_stack": 50,
+  "color": "#5ea562",
+  "icon": "items/raw_resources/healing_herb/icon.png",
+  "world_image": "items/raw_resources/healing_herb/world.png",
+  "source": "采集草药苗或击杀怪物获得",
+  "category": "plant",
+  "properties": {
+    "material_grade": 1
+  }
+}

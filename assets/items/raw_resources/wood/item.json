@@ -1,0 +1,13 @@
+{
+  "id": "wood",
+  "display_name": "木头",
+  "max_stack": 99,
+  "color": "#9c6238",
+  "icon": "items/raw_resources/wood/icon.png",
+  "world_image": "items/raw_resources/wood/world.png",
+  "source": "砍伐树木获得",
+  "category": "wood",
+  "properties": {
+    "material_grade": 1
+  }
+}

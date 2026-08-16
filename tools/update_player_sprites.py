@@ -126,7 +126,7 @@ def save_outputs(outputs: dict[str, Image.Image], output_dir: Path) -> None:
 
 def sync_build_assets(project_root: Path, output_dir: Path, names: list[str]) -> None:
     for relative in ("cmake-build-debug/assets", "build-msvc/assets"):
-        target_dir = project_root / relative
+        target_dir = project_root / relative / "characters" / "player"
         if not target_dir.is_dir() or target_dir.resolve() == output_dir.resolve():
             continue
         for name in names:
@@ -149,7 +149,7 @@ def main() -> None:
     args = parse_args()
     source_root = args.source_root.resolve()
     project_root = args.project_root.resolve()
-    output_dir = (args.output_dir or (project_root / "assets")).resolve()
+    output_dir = (args.output_dir or (project_root / "assets" / "characters" / "player")).resolve()
 
     groups = source_groups(source_root)
     source_size = validate_sources(groups)

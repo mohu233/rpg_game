@@ -2,16 +2,21 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <numeric>
+#include <random>
+#include <vector>
 
 namespace rpg {
 namespace {
 
 constexpr std::array<WorldLayerDef, 4> kLayers{{
-    {1, L"垂纱之地", L"veil_lands.json", 300, 500, 400, 400, 0.22f, 0.10f, "grass"},
-    {2, L"迷雾禁区", L"mist_forbidden_zone.json", 200, 350, 275, 275, 0.18f, 0.13f, "dirt"},
-    {3, L"暗影巢穴", L"shadow_nest.json", 150, 250, 200, 200, 0.12f, 0.17f, "gravel"},
-    {4, L"上古祭坛", L"ancient_altar.json", 100, 180, 140, 140, 0.07f, 0.20f, "sand"},
+    {1, L"垂纱之地", L"veil_lands.json", 300, 500, 400, 400, 0.22f, 0.10f, "grass", {0.75f, 0.25f, 0.00f, 0.00f}},
+    {2, L"迷雾禁区", L"mist_forbidden_zone.json", 200, 350, 275, 275, 0.18f, 0.13f, "dirt", {0.25f, 0.50f, 0.25f, 0.00f}},
+    {3, L"暗影巢穴", L"shadow_nest.json", 150, 250, 200, 200, 0.12f, 0.17f, "gravel", {0.00f, 0.00f, 0.75f, 0.25f}},
+    {4, L"上古祭坛", L"ancient_altar.json", 100, 180, 140, 140, 0.07f, 0.20f, "sand", {0.00f, 0.00f, 0.00f, 1.00f}},
 }};
+
+constexpr std::array<std::string_view, 4> kTerrainIds{{"grass", "dirt", "gravel", "sand"}};
 
 std::uint32_t TileHash(int x, int y, int layer, std::uint32_t salt) {
     std::uint32_t value = static_cast<std::uint32_t>(x) * 0x8da6b343u;
@@ -25,6 +30,187 @@ std::uint32_t TileHash(int x, int y, int layer, std::uint32_t salt) {
 
 float HashUnit(int x, int y, int layer, std::uint32_t salt) {
     return static_cast<float>(TileHash(x, y, layer, salt) & 0xffffu) / 65535.0f;
+}
+
+constexpr int kMinTerrainRegionTiles = 100;
+
+struct TerrainSeedRegion {
+    int terrainIndex = 0;
+    int count = 0;
+    bool active = true;
+};
+
+struct TerrainGrowthCandidate {
+    int tileIndex = 0;
+    int regionIndex = 0;
+};
+
+std::vector<int> AllocateTerrainSeeds(const WorldLayerDef& layer, int seedCount) {
+    std::array<int, 4> counts{};
+    std::array<float, 4> remainders{};
+    int assigned = 0;
+    for (int terrainIndex = 0; terrainIndex < static_cast<int>(layer.terrainRates.size()); ++terrainIndex) {
+        const float rate = layer.terrainRates[static_cast<size_t>(terrainIndex)];
+        if (rate <= 0.0f) continue;
+        const float exact = rate * seedCount;
+        counts[static_cast<size_t>(terrainIndex)] = static_cast<int>(exact);
+        remainders[static_cast<size_t>(terrainIndex)] = exact - counts[static_cast<size_t>(terrainIndex)];
+        assigned += counts[static_cast<size_t>(terrainIndex)];
+    }
+    while (assigned < seedCount) {
+        int best = 0;
+        for (int terrainIndex = 1; terrainIndex < static_cast<int>(remainders.size()); ++terrainIndex) {
+            if (remainders[static_cast<size_t>(terrainIndex)] > remainders[static_cast<size_t>(best)]) {
+                best = terrainIndex;
+            }
+        }
+        ++counts[static_cast<size_t>(best)];
+        remainders[static_cast<size_t>(best)] = -1.0f;
+        ++assigned;
+    }
+    std::vector<int> terrainIndices;
+    terrainIndices.reserve(static_cast<size_t>(seedCount));
+    for (int terrainIndex = 0; terrainIndex < static_cast<int>(counts.size()); ++terrainIndex) {
+        terrainIndices.insert(
+            terrainIndices.end(),
+            static_cast<size_t>(counts[static_cast<size_t>(terrainIndex)]),
+            terrainIndex);
+    }
+    return terrainIndices;
+}
+
+void AddOpenNeighbors(
+    const std::vector<int>& labels,
+    int width,
+    int height,
+    int tileIndex,
+    int regionIndex,
+    std::vector<TerrainGrowthCandidate>& frontier) {
+    const int x = tileIndex % width;
+    const int y = tileIndex / width;
+    constexpr int dx[] = {-1, 1, 0, 0};
+    constexpr int dy[] = {0, 0, -1, 1};
+    for (int direction = 0; direction < 4; ++direction) {
+        const int nx = x + dx[direction];
+        const int ny = y + dy[direction];
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const int next = ny * width + nx;
+        if (labels[static_cast<size_t>(next)] == -1) frontier.push_back({next, regionIndex});
+    }
+}
+
+void GrowUnclaimedTerrain(
+    std::vector<int>& labels,
+    std::vector<TerrainSeedRegion>& regions,
+    int width,
+    int height,
+    std::mt19937& random) {
+    std::vector<std::vector<TerrainGrowthCandidate>> frontiers(regions.size());
+    for (int tileIndex = 0; tileIndex < static_cast<int>(labels.size()); ++tileIndex) {
+        const int regionIndex = labels[static_cast<size_t>(tileIndex)];
+        if (regionIndex < 0 || !regions[static_cast<size_t>(regionIndex)].active) continue;
+        AddOpenNeighbors(
+            labels,
+            width,
+            height,
+            tileIndex,
+            regionIndex,
+            frontiers[static_cast<size_t>(regionIndex)]);
+    }
+
+    std::vector<int> order;
+    for (int regionIndex = 0; regionIndex < static_cast<int>(regions.size()); ++regionIndex) {
+        if (regions[static_cast<size_t>(regionIndex)].active) order.push_back(regionIndex);
+    }
+    bool grew = true;
+    while (grew) {
+        grew = false;
+        std::shuffle(order.begin(), order.end(), random);
+        for (const int regionIndex : order) {
+            auto& frontier = frontiers[static_cast<size_t>(regionIndex)];
+            while (!frontier.empty()) {
+                const size_t pick = static_cast<size_t>(random() % frontier.size());
+                const TerrainGrowthCandidate candidate = frontier[pick];
+                frontier[pick] = frontier.back();
+                frontier.pop_back();
+                if (labels[static_cast<size_t>(candidate.tileIndex)] != -1) continue;
+                labels[static_cast<size_t>(candidate.tileIndex)] = regionIndex;
+                ++regions[static_cast<size_t>(regionIndex)].count;
+                AddOpenNeighbors(labels, width, height, candidate.tileIndex, regionIndex, frontier);
+                grew = true;
+                break;
+            }
+        }
+    }
+}
+
+void RemoveUndersizedTerrainRegions(
+    std::vector<int>& labels,
+    std::vector<TerrainSeedRegion>& regions,
+    int width,
+    int height,
+    std::mt19937& random) {
+    while (true) {
+        int activeCount = 0;
+        int undersizedCount = 0;
+        int largestRegion = -1;
+        for (int regionIndex = 0; regionIndex < static_cast<int>(regions.size()); ++regionIndex) {
+            const TerrainSeedRegion& region = regions[static_cast<size_t>(regionIndex)];
+            if (!region.active) continue;
+            ++activeCount;
+            if (region.count < kMinTerrainRegionTiles) ++undersizedCount;
+            if (largestRegion < 0 || region.count > regions[static_cast<size_t>(largestRegion)].count) {
+                largestRegion = regionIndex;
+            }
+        }
+        if (undersizedCount == 0) return;
+
+        for (int regionIndex = 0; regionIndex < static_cast<int>(regions.size()); ++regionIndex) {
+            TerrainSeedRegion& region = regions[static_cast<size_t>(regionIndex)];
+            if (!region.active || region.count >= kMinTerrainRegionTiles) continue;
+            if (undersizedCount == activeCount && regionIndex == largestRegion) continue;
+            region.active = false;
+            region.count = 0;
+            for (int& label : labels) {
+                if (label == regionIndex) label = -1;
+            }
+        }
+        GrowUnclaimedTerrain(labels, regions, width, height, random);
+    }
+}
+
+std::vector<std::string> GenerateNaturalTerrain(
+    const WorldLayerDef& layer,
+    int width,
+    int height,
+    std::uint32_t terrainSeed) {
+    const int tileCount = width * height;
+    const int seedCount = std::clamp(width / 2, 1, std::max(1, tileCount / kMinTerrainRegionTiles));
+    std::mt19937 random(terrainSeed ^ TileHash(width, height, layer.index, 0x6d2b79f5u));
+
+    std::vector<int> terrainIndices = AllocateTerrainSeeds(layer, seedCount);
+    std::shuffle(terrainIndices.begin(), terrainIndices.end(), random);
+    std::vector<int> seedTiles(static_cast<size_t>(tileCount));
+    std::iota(seedTiles.begin(), seedTiles.end(), 0);
+    std::shuffle(seedTiles.begin(), seedTiles.end(), random);
+
+    std::vector<int> labels(static_cast<size_t>(tileCount), -1);
+    std::vector<TerrainSeedRegion> regions(static_cast<size_t>(seedCount));
+    for (int regionIndex = 0; regionIndex < seedCount; ++regionIndex) {
+        regions[static_cast<size_t>(regionIndex)].terrainIndex = terrainIndices[static_cast<size_t>(regionIndex)];
+        regions[static_cast<size_t>(regionIndex)].count = 1;
+        labels[static_cast<size_t>(seedTiles[static_cast<size_t>(regionIndex)])] = regionIndex;
+    }
+    GrowUnclaimedTerrain(labels, regions, width, height, random);
+    RemoveUndersizedTerrainRegions(labels, regions, width, height, random);
+
+    std::vector<std::string> terrain(static_cast<size_t>(tileCount));
+    for (int tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
+        const int regionIndex = labels[static_cast<size_t>(tileIndex)];
+        const int terrainIndex = regions[static_cast<size_t>(regionIndex)].terrainIndex;
+        terrain[static_cast<size_t>(tileIndex)] = kTerrainIds[static_cast<size_t>(terrainIndex)];
+    }
+    return terrain;
 }
 
 struct TilePoint {
@@ -187,7 +373,11 @@ Scene GenerateWorldLayer(const WorldLayerDef& layer, int width, int height, floa
     Scene scene;
     scene.mapWidth = std::clamp(width, layer.minSize, layer.maxSize);
     scene.mapHeight = std::clamp(height, layer.minSize, layer.maxSize);
-    scene.naturalTerrain.assign(static_cast<size_t>(scene.mapWidth) * scene.mapHeight, layer.terrainId);
+    scene.naturalTerrain = GenerateNaturalTerrain(
+        layer,
+        scene.mapWidth,
+        scene.mapHeight,
+        scene.terrainVariantSeed);
     scene.builtTerrain.assign(static_cast<size_t>(scene.mapWidth) * scene.mapHeight, "none");
     scene.territory.assign(static_cast<size_t>(scene.mapWidth) * scene.mapHeight, 0);
     scene.playerStart = {

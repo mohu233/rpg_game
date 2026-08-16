@@ -1,12 +1,15 @@
 #include "scene.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <system_error>
@@ -122,6 +125,50 @@ std::optional<float> FindFloatField(const std::string& text, std::string_view ke
         return std::nullopt;
     }
     return out;
+}
+
+std::optional<std::uint32_t> FindUint32Field(const std::string& text, std::string_view key) {
+    auto value = FindFieldValue(text, key);
+    if (!value) {
+        return std::nullopt;
+    }
+
+    size_t end = *value;
+    while (end < text.size() && std::isdigit(static_cast<unsigned char>(text[end]))) {
+        ++end;
+    }
+    std::uint32_t out = 0;
+    const auto result = std::from_chars(text.data() + *value, text.data() + end, out);
+    if (result.ec != std::errc() || result.ptr != text.data() + end) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+std::uint32_t MixSeed(std::uint32_t value) {
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
+std::uint32_t NewTerrainVariantSeed() {
+    static std::atomic<std::uint32_t> sequence{0x9e3779b9u};
+    const auto ticks = static_cast<std::uint64_t>(
+        std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    return MixSeed(static_cast<std::uint32_t>(ticks) ^
+                   static_cast<std::uint32_t>(ticks >> 32) ^
+                   sequence.fetch_add(0x9e3779b9u, std::memory_order_relaxed));
+}
+
+std::uint32_t LegacyTerrainVariantSeed(std::string_view sceneText) {
+    std::uint32_t hash = 2166136261u;
+    for (const unsigned char c : sceneText) {
+        hash = (hash ^ c) * 16777619u;
+    }
+    return MixSeed(hash);
 }
 
 std::optional<bool> FindBoolField(const std::string& text, std::string_view key) {
@@ -413,13 +460,21 @@ bool LoadObjectDef(
         error = "image file does not exist: " + imagePath.u8string();
         return false;
     }
-    if (imagePath.extension() != L".bmp" && imagePath.extension() != L".png") {
-        error = "runtime images must use the .bmp or .png format";
+    std::wstring extension = imagePath.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+    if (extension != L".png") {
+        error = "runtime object images must use the .png format";
         return false;
     }
 
     def.displayName = ToWide(FindStringField(text, "display_name").value_or(def.type));
-    def.bitmapPath = (std::filesystem::path(L"objects") / moduleDirectory.filename() / imageRelative).generic_wstring();
+    const std::filesystem::path objectsRoot = std::filesystem::path(RPG_ASSET_DIR) / L"objects";
+    const std::filesystem::path moduleRelative = moduleDirectory.lexically_relative(objectsRoot);
+    if (moduleRelative.empty() || !IsSafeRelativePath(moduleRelative)) {
+        error = "object module must be inside the objects directory";
+        return false;
+    }
+    def.bitmapPath = (std::filesystem::path(L"objects") / moduleRelative / imageRelative).generic_wstring();
     def.width = FindFloatField(text, "width").value_or(48.0f);
     def.height = FindFloatField(text, "height").value_or(48.0f);
     def.zOffset = FindFloatField(text, "z_offset").value_or(0.0f);
@@ -507,17 +562,39 @@ bool LoadTerrainDef(
         return false;
     }
 
-    def.variants = static_cast<int>(FindFloatField(text, "variants").value_or(1.0f));
-    if (def.variants < 1 || def.variants > 8) {
-        error = "variants must be between 1 and 8";
-        return false;
-    }
-    for (int variant = 1; variant < def.variants; ++variant) {
-        const std::filesystem::path variantPath = imagePath.parent_path() /
-            (imagePath.stem().wstring() + L"_" + std::to_wstring(variant) + imagePath.extension().wstring());
-        if (!std::filesystem::is_regular_file(variantPath, ec)) {
-            error = "variant image does not exist: " + variantPath.u8string();
+    if (layer == TerrainLayer::Natural) {
+        def.variants = 1;
+        for (int variant = 1; variant < std::numeric_limits<int>::max(); ++variant) {
+            const std::filesystem::path variantPath = imagePath.parent_path() /
+                (imagePath.stem().wstring() + L"_" + std::to_wstring(variant) + imagePath.extension().wstring());
+            ec.clear();
+            const bool exists = std::filesystem::exists(variantPath, ec);
+            if (ec) {
+                error = "failed to inspect terrain variant: " + variantPath.u8string();
+                return false;
+            }
+            if (!exists) {
+                break;
+            }
+            if (!std::filesystem::is_regular_file(variantPath, ec) || ec) {
+                error = "terrain variant is not a regular file: " + variantPath.u8string();
+                return false;
+            }
+            ++def.variants;
+        }
+    } else {
+        def.variants = static_cast<int>(FindFloatField(text, "variants").value_or(1.0f));
+        if (def.variants < 1 || def.variants > 8) {
+            error = "variants must be between 1 and 8";
             return false;
+        }
+        for (int variant = 1; variant < def.variants; ++variant) {
+            const std::filesystem::path variantPath = imagePath.parent_path() /
+                (imagePath.stem().wstring() + L"_" + std::to_wstring(variant) + imagePath.extension().wstring());
+            if (!std::filesystem::is_regular_file(variantPath, ec)) {
+                error = "variant image does not exist: " + variantPath.u8string();
+                return false;
+            }
         }
     }
 
@@ -594,12 +671,10 @@ bool ReloadObjectDefs(std::string* error) {
     }
 
     std::vector<std::filesystem::path> moduleDirectories;
-    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
-        if (!it->is_directory()) {
-            continue;
-        }
-        if (std::filesystem::is_regular_file(it->path() / L"object.json")) {
-            moduleDirectories.push_back(it->path());
+    const auto options = std::filesystem::directory_options::skip_permission_denied;
+    for (std::filesystem::recursive_directory_iterator it(root, options, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file() && it->path().filename() == L"object.json") {
+            moduleDirectories.push_back(it->path().parent_path());
         }
     }
     if (ec) {
@@ -616,7 +691,7 @@ bool ReloadObjectDefs(std::string* error) {
         SceneObjectDef def;
         std::string moduleError;
         if (!LoadObjectDef(directory, def, moduleError)) {
-            warnings.push_back(directory.filename().u8string() + ": " + moduleError);
+            warnings.push_back(directory.lexically_relative(root).generic_u8string() + ": " + moduleError);
             continue;
         }
 
@@ -624,7 +699,7 @@ bool ReloadObjectDefs(std::string* error) {
             return item.type == def.type;
         });
         if (duplicate) {
-            warnings.push_back(directory.filename().u8string() + ": duplicate type '" + def.type + "'");
+            warnings.push_back(directory.lexically_relative(root).generic_u8string() + ": duplicate type '" + def.type + "'");
             continue;
         }
         loaded.push_back(std::move(def));
@@ -748,6 +823,7 @@ const SceneObjectDef* FindObjectDef(std::string_view type) {
 }
 
 Scene::Scene() {
+    terrainVariantSeed = NewTerrainVariantSeed();
     naturalTerrain.assign(mapWidth * mapHeight, "grass");
     builtTerrain.assign(mapWidth * mapHeight, "none");
     territory.assign(mapWidth * mapHeight, 0);
@@ -848,6 +924,8 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
         static_cast<int>(std::lround(FindFloatField(text, "height").value_or(kMapHeight))),
         1,
         kMaximumMapDimension);
+    loaded.terrainVariantSeed = FindUint32Field(text, "terrain_variant_seed")
+                                    .value_or(LegacyTerrainVariantSeed(text));
     loaded.naturalTerrain.assign(loaded.mapWidth * loaded.mapHeight, "grass");
     loaded.builtTerrain.assign(loaded.mapWidth * loaded.mapHeight, "none");
     loaded.territory.assign(loaded.mapWidth * loaded.mapHeight, 0);
@@ -923,6 +1001,7 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     out << "  \"version\": 4,\n";
     out << "  \"width\": " << scene.mapWidth << ",\n";
     out << "  \"height\": " << scene.mapHeight << ",\n";
+    out << "  \"terrain_variant_seed\": " << scene.terrainVariantSeed << ",\n";
     out << "  \"terrain\": {\n";
     out << "    \"natural_palette\": [";
     for (size_t i = 0; i < naturalPalette.size(); ++i) {

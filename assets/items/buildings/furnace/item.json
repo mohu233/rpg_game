@@ -1,0 +1,27 @@
+{
+  "id": "furnace",
+  "display_name": "熔炉",
+  "max_stack": 5,
+  "color": "#6f7777",
+  "icon": "items/buildings/furnace/icon.png",
+  "world_image": "items/buildings/furnace/world.png",
+  "source": "建造石建造",
+  "category": "building",
+  "properties": {
+    "building": 1,
+    "furnace": 1
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "wood",
+        "count": 2
+      },
+      {
+        "item": "stone",
+        "count": 4
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "amethyst",
+  "display_name": "紫宝石",
+  "max_stack": 20,
+  "color": "#9a58c7",
+  "icon": "items/gems/amethyst/icon.png",
+  "world_image": "items/gems/amethyst/world.png",
+  "source": "挖掘任意矿石小概率获得",
+  "category": "gem",
+  "properties": {
+    "rarity": 3
+  }
+}

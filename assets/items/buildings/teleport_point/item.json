@@ -1,0 +1,11 @@
+{
+  "id": "teleport_point",
+  "display_name": "传送点",
+  "max_stack": 1,
+  "color": "#87918e",
+  "icon": "objects/special/teleport_point/teleport_point.png",
+  "world_image": "objects/special/teleport_point/teleport_point.png",
+  "properties": {
+    "building": 1
+  }
+}

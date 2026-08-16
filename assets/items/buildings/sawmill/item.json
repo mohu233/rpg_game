@@ -1,0 +1,27 @@
+{
+  "id": "sawmill",
+  "display_name": "锯木台",
+  "max_stack": 1,
+  "color": "#8b755e",
+  "icon": "items/buildings/sawmill/icon.png",
+  "world_image": "items/buildings/sawmill/world.png",
+  "source": "制作面板建造",
+  "category": "building",
+  "properties": {
+    "building": 1,
+    "sawmill": 1
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "wood",
+        "count": 1
+      },
+      {
+        "item": "iron_ingot",
+        "count": 1
+      }
+    ]
+  }
+}

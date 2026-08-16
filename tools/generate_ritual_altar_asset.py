@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
-OUTPUT = Path(__file__).resolve().parents[1] / "assets" / "objects" / "ending_ritual_altar" / "ending_ritual_altar.png"
+OUTPUT = Path(__file__).resolve().parents[1] / "assets" / "objects" / "special" / "ending_ritual_altar" / "ending_ritual_altar.png"
 
 
 def main() -> None:

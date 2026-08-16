@@ -1,0 +1,13 @@
+{
+  "id": "corn",
+  "display_name": "玉米",
+  "max_stack": 99,
+  "color": "#e1bd38",
+  "icon": "items/crops/corn/icon.png",
+  "world_image": "items/crops/corn/world.png",
+  "source": "采集玉米获得",
+  "category": "crop",
+  "properties": {
+    "food": 1
+  }
+}

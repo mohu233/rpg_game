@@ -2,7 +2,10 @@
 #include "../src/world_layers.h"
 #include "../src/save_game.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -21,6 +24,54 @@ bool NearlyEqual(float a, float b) {
 int Fail(const std::string& message) {
     std::cerr << message << '\n';
     return 1;
+}
+
+int TerrainCount(const rpg::Scene& scene, std::string_view terrainId) {
+    return static_cast<int>(std::count(scene.naturalTerrain.begin(), scene.naturalTerrain.end(), terrainId));
+}
+
+bool TerrainComponentsAtLeast(const rpg::Scene& scene, std::string_view terrainId, int minimumTiles) {
+    std::vector<std::uint8_t> visited(scene.naturalTerrain.size(), 0);
+    for (int start = 0; start < static_cast<int>(scene.naturalTerrain.size()); ++start) {
+        if (visited[static_cast<size_t>(start)] || scene.naturalTerrain[static_cast<size_t>(start)] != terrainId) continue;
+        std::deque<int> pending{start};
+        visited[static_cast<size_t>(start)] = 1;
+        int reached = 0;
+        while (!pending.empty()) {
+            const int index = pending.front();
+            pending.pop_front();
+            ++reached;
+            const int x = index % scene.mapWidth;
+            const int y = index / scene.mapWidth;
+            constexpr int dx[] = {-1, 1, 0, 0};
+            constexpr int dy[] = {0, 0, -1, 1};
+            for (int direction = 0; direction < 4; ++direction) {
+                const int nx = x + dx[direction];
+                const int ny = y + dy[direction];
+                if (nx < 0 || ny < 0 || nx >= scene.mapWidth || ny >= scene.mapHeight) continue;
+                const int next = ny * scene.mapWidth + nx;
+                if (visited[static_cast<size_t>(next)] || scene.naturalTerrain[static_cast<size_t>(next)] != terrainId) continue;
+                visited[static_cast<size_t>(next)] = 1;
+                pending.push_back(next);
+            }
+        }
+        if (reached < minimumTiles) return false;
+    }
+    return true;
+}
+
+int CountNaturalTerrainImages(const rpg::TerrainDef& def) {
+    const std::filesystem::path base = std::filesystem::path(RPG_ASSET_DIR) / def.imagePath;
+    int count = 1;
+    for (int variant = 1; ; ++variant) {
+        const std::filesystem::path path = base.parent_path() /
+            (base.stem().wstring() + L"_" + std::to_wstring(variant) + base.extension().wstring());
+        if (!std::filesystem::is_regular_file(path)) {
+            break;
+        }
+        ++count;
+    }
+    return count;
 }
 
 } // namespace
@@ -63,9 +114,18 @@ int main(int argc, char** argv) {
     if (rpg::NaturalTerrainDefs().size() != 7 || rpg::BuiltTerrainDefs().size() != 2) {
         return Fail("unexpected terrain module count");
     }
+    for (const rpg::TerrainDef& def : rpg::NaturalTerrainDefs()) {
+        if (def.variants != CountNaturalTerrainImages(def)) {
+            return Fail("natural terrain variants were not discovered from PNG files: " + def.id);
+        }
+    }
+    const rpg::TerrainDef* grass = rpg::FindTerrainDef("grass", rpg::TerrainLayer::Natural);
+    if (!grass || grass->variants < 6) {
+        return Fail("the six grass textures were not loaded");
+    }
 
     rpg::Scene original;
-    const std::filesystem::path scenePath = std::filesystem::path(RPG_ASSET_DIR) / L"scenes/demo_scene.json";
+    const std::filesystem::path scenePath = std::filesystem::path(RPG_ASSET_DIR) / L"maps/demo_scene.json";
     if (!rpg::LoadSceneFromFile(scenePath, original, &error)) {
         return Fail("failed to load scene: " + error);
     }
@@ -88,6 +148,7 @@ int main(int argc, char** argv) {
     }
 
     const std::filesystem::path roundTripPath = std::filesystem::current_path() / L"scene_roundtrip_test.json";
+    original.terrainVariantSeed = 0x5a17c3e9u;
     rpg::SetTerritory(original, 8, 8, true);
     rpg::SceneObject plantedFarmland = rpg::MakeObject("farmland", {408.0f, 432.0f}, 9901);
     plantedFarmland.id = "roundtrip_farmland";
@@ -107,6 +168,9 @@ int main(int argc, char** argv) {
     }
     if (loaded.naturalTerrain != original.naturalTerrain || loaded.builtTerrain != original.builtTerrain) {
         return Fail("terrain layers changed during round trip");
+    }
+    if (loaded.terrainVariantSeed != original.terrainVariantSeed) {
+        return Fail("terrain variant seed changed during round trip");
     }
     if (loaded.backgroundImagePath != original.backgroundImagePath) {
         return Fail("background image path changed during round trip");
@@ -132,8 +196,10 @@ int main(int argc, char** argv) {
     }
     rpg::Scene legacy;
     const bool legacyOk = rpg::LoadSceneFromFile(legacyPath, legacy, &error);
+    rpg::Scene legacyReloaded;
+    const bool legacyReloadedOk = rpg::LoadSceneFromFile(legacyPath, legacyReloaded, &error);
     std::filesystem::remove(legacyPath, removeError);
-    if (!legacyOk ||
+    if (!legacyOk || !legacyReloadedOk || legacy.terrainVariantSeed != legacyReloaded.terrainVariantSeed ||
         rpg::NaturalTerrainAt(legacy, 0, 0) != "grass" ||
         rpg::NaturalTerrainAt(legacy, 1, 0) != "dirt" ||
         rpg::NaturalTerrainAt(legacy, 2, 0) != "sand" ||
@@ -191,6 +257,18 @@ int main(int argc, char** argv) {
         if (generated.mapWidth < layer.minSize || generated.mapWidth > layer.maxSize ||
             generated.mapHeight < layer.minSize || generated.mapHeight > layer.maxSize) {
             return Fail("generated world layer has invalid dimensions");
+        }
+        constexpr std::array<std::string_view, 4> terrainIds{{"grass", "dirt", "gravel", "sand"}};
+        const int tileCount = generated.mapWidth * generated.mapHeight;
+        for (size_t terrainIndex = 0; terrainIndex < terrainIds.size(); ++terrainIndex) {
+            const int actual = TerrainCount(generated, terrainIds[terrainIndex]);
+            const float actualRate = static_cast<float>(actual) / tileCount;
+            if (std::fabs(actualRate - layer.terrainRates[terrainIndex]) > 0.06f) {
+                return Fail("generated terrain ratio is incorrect for layer " + std::to_string(layer.index));
+            }
+            if (!TerrainComponentsAtLeast(generated, terrainIds[terrainIndex], 100)) {
+                return Fail("generated terrain contains an undersized region for layer " + std::to_string(layer.index));
+            }
         }
         int portalCount = 0;
         int altarCount = 0;

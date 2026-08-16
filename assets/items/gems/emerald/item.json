@@ -1,0 +1,13 @@
+{
+  "id": "emerald",
+  "display_name": "绿宝石",
+  "max_stack": 20,
+  "color": "#3cb878",
+  "icon": "items/gems/emerald/icon.png",
+  "world_image": "items/gems/emerald/world.png",
+  "source": "挖掘任意矿石小概率获得",
+  "category": "gem",
+  "properties": {
+    "rarity": 3
+  }
+}

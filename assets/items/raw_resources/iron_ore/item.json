@@ -1,0 +1,15 @@
+{
+  "id": "iron_ore",
+  "display_name": "铁矿石",
+  "max_stack": 50,
+  "color": "#77858a",
+  "icon": "items/raw_resources/iron_ore/icon.png",
+  "world_image": "items/raw_resources/iron_ore/world.png",
+  "source": "挖掘铁矿石获得",
+  "category": "ore",
+  "properties": {
+    "material_grade": 1,
+    "value": 8,
+    "weight": 2.5
+  }
+}

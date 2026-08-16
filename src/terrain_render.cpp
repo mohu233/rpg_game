@@ -196,17 +196,37 @@ void DrawLine(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     SelectObject(hdc, oldPen);
 }
 
-size_t TerrainVariant(int tx, int ty, size_t count) {
-    const unsigned int hash = static_cast<unsigned int>(tx) * 73856093u ^ static_cast<unsigned int>(ty) * 19349663u;
-    return count == 0 ? 0 : hash % count;
+size_t TerrainVariant(std::uint32_t seed, std::string_view terrainId, int tx, int ty, size_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
+    std::uint32_t hash = seed ^ 2166136261u;
+    for (const unsigned char c : terrainId) {
+        hash = (hash ^ c) * 16777619u;
+    }
+    hash ^= static_cast<std::uint32_t>(tx) * 0x8da6b343u;
+    hash ^= static_cast<std::uint32_t>(ty) * 0xd8163841u;
+    hash ^= hash >> 16;
+    hash *= 0x7feb352du;
+    hash ^= hash >> 15;
+    hash *= 0x846ca68bu;
+    hash ^= hash >> 16;
+    return hash % count;
 }
 
-bool DrawTerrainImage(Gdiplus::Graphics& graphics, const TerrainDef& def, const RECT& rect, int tx, int ty) {
+bool DrawTerrainImage(
+    Gdiplus::Graphics& graphics,
+    const TerrainDef& def,
+    const RECT& rect,
+    std::uint32_t seed,
+    int tx,
+    int ty) {
     TerrainBitmap& cached = BitmapCacheFor(def);
     if (!LoadTerrainBitmap(def, cached)) {
         return false;
     }
-    Gdiplus::Bitmap* bitmap = cached.bases[TerrainVariant(tx, ty, cached.bases.size())].get();
+    Gdiplus::Bitmap* bitmap = cached.bases[TerrainVariant(seed, def.id, tx, ty, cached.bases.size())].get();
     const Gdiplus::Rect destination(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
     return graphics.DrawImage(bitmap, destination, 0, 0, kTileSize, kTileSize, Gdiplus::UnitPixel) == Gdiplus::Ok;
 }
@@ -216,13 +236,14 @@ bool DrawMaskedTerrainImage(
     const TerrainDef& def,
     MaskDirection direction,
     const RECT& rect,
+    std::uint32_t seed,
     int sourceTileX,
     int sourceTileY) {
     TerrainBitmap& cached = BitmapCacheFor(def);
     if (!LoadTerrainBitmap(def, cached)) {
         return false;
     }
-    const size_t variant = TerrainVariant(sourceTileX, sourceTileY, cached.masked.size());
+    const size_t variant = TerrainVariant(seed, def.id, sourceTileX, sourceTileY, cached.masked.size());
     Gdiplus::Bitmap* bitmap = cached.masked[variant][static_cast<size_t>(direction)].get();
     if (!bitmap) {
         return false;
@@ -315,7 +336,7 @@ void DrawTerrain(
                 continue;
             }
             const TerrainDef* current = FindTerrainDef(currentId, TerrainLayer::Natural);
-            if (!current || !DrawTerrainImage(graphics, *current, rect, x, y)) {
+            if (!current || !DrawTerrainImage(graphics, *current, rect, scene.terrainVariantSeed, x, y)) {
                 FillSolidRect(hdc, rect, current ? TerrainFallbackColor(*current) : kMissingTerrain);
             }
 
@@ -337,7 +358,9 @@ void DrawTerrain(
                 }
                 const TerrainDef* neighbor = FindTerrainDef(neighborId, TerrainLayer::Natural);
                 if (NeighborWins(current, neighbor)) {
-                    DrawMaskedTerrainImage(graphics, *neighbor, offset.mask, rect, x + offset.x, y + offset.y);
+                    DrawMaskedTerrainImage(
+                        graphics, *neighbor, offset.mask, rect, scene.terrainVariantSeed,
+                        x + offset.x, y + offset.y);
                 }
             }
         }
@@ -351,7 +374,7 @@ void DrawTerrain(
             }
             const TerrainDef* built = FindTerrainDef(builtId, TerrainLayer::Built);
             const RECT rect = TileRect(x, y, cameraX, cameraY, zoom);
-            if (!built || !DrawTerrainImage(graphics, *built, rect, x, y)) {
+            if (!built || !DrawTerrainImage(graphics, *built, rect, scene.terrainVariantSeed, x, y)) {
                 FillSolidRect(hdc, rect, built ? TerrainFallbackColor(*built) : kMissingTerrain);
             }
         }

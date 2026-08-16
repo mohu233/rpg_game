@@ -128,19 +128,32 @@ bool ReloadItemDefs(std::string* error) {
         return false;
     }
 
-    for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
-        if (ec || !entry.is_directory()) {
-            continue;
+    std::vector<std::filesystem::path> definitionPaths;
+    const auto options = std::filesystem::directory_options::skip_permission_denied;
+    for (std::filesystem::recursive_directory_iterator it(root, options, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file() && it->path().filename() == L"item.json") {
+            definitionPaths.push_back(it->path());
         }
-        const std::filesystem::path definitionPath = entry.path() / L"item.json";
-        if (!std::filesystem::exists(definitionPath, ec)) {
-            continue;
+    }
+    if (ec) {
+        if (error) {
+            *error = "failed to scan item definitions: " + ec.message();
         }
+        return false;
+    }
+    std::sort(definitionPaths.begin(), definitionPaths.end());
+
+    for (const std::filesystem::path& definitionPath : definitionPaths) {
         ItemDef def;
         std::string itemError;
         if (LoadDefinition(definitionPath, def, itemError)) {
-            if (!FindItemDef(def.id)) {
+            const bool duplicate = std::any_of(g_itemDefs.begin(), g_itemDefs.end(), [&def](const ItemDef& item) {
+                return item.id == def.id;
+            });
+            if (!duplicate) {
                 g_itemDefs.push_back(std::move(def));
+            } else {
+                messages += "duplicate item id '" + def.id + "': " + definitionPath.generic_u8string() + "\n";
             }
         } else {
             messages += itemError + "\n";

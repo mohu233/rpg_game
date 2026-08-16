@@ -1,0 +1,13 @@
+{
+  "id": "exotic_wood",
+  "display_name": "特异木头",
+  "max_stack": 99,
+  "color": "#527e72",
+  "icon": "items/raw_resources/exotic_wood/icon.png",
+  "world_image": "items/raw_resources/exotic_wood/world.png",
+  "source": "砍伐特异树木获得",
+  "category": "wood",
+  "properties": {
+    "material_grade": 2
+  }
+}

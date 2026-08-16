@@ -537,15 +537,15 @@ void LoadSpriteSheet(SpriteSheet& sprite, const std::filesystem::path& path) {
 }
 
 void LoadPlayerSprites() {
-    LoadSpriteSheet(g_playerSprite, AssetPath(L"player_walk_side_8.png"));
-    LoadSpriteSheet(g_playerRunFront, AssetPath(L"player_walk_front.png"));
-    LoadSpriteSheet(g_playerRunBack, AssetPath(L"player_walk_back.png"));
-    LoadSpriteSheet(g_playerAttackFront, AssetPath(L"player_attack_front.png"));
-    LoadSpriteSheet(g_playerAttackSide, AssetPath(L"player_attack_side.png"));
-    LoadSpriteSheet(g_playerAttackBack, AssetPath(L"player_attack_back.png"));
-    LoadSpriteSheet(g_playerIdleSprites[0], AssetPath(L"player_idle_front.png"));
-    LoadSpriteSheet(g_playerIdleSprites[1], AssetPath(L"player_idle_side.png"));
-    LoadSpriteSheet(g_playerIdleSprites[2], AssetPath(L"player_idle_back.png"));
+    LoadSpriteSheet(g_playerSprite, AssetPath(L"characters/player/player_walk_side_8.png"));
+    LoadSpriteSheet(g_playerRunFront, AssetPath(L"characters/player/player_walk_front.png"));
+    LoadSpriteSheet(g_playerRunBack, AssetPath(L"characters/player/player_walk_back.png"));
+    LoadSpriteSheet(g_playerAttackFront, AssetPath(L"characters/player/player_attack_front.png"));
+    LoadSpriteSheet(g_playerAttackSide, AssetPath(L"characters/player/player_attack_side.png"));
+    LoadSpriteSheet(g_playerAttackBack, AssetPath(L"characters/player/player_attack_back.png"));
+    LoadSpriteSheet(g_playerIdleSprites[0], AssetPath(L"characters/player/player_idle_front.png"));
+    LoadSpriteSheet(g_playerIdleSprites[1], AssetPath(L"characters/player/player_idle_side.png"));
+    LoadSpriteSheet(g_playerIdleSprites[2], AssetPath(L"characters/player/player_idle_back.png"));
 }
 
 ItemStack MakeItemStack(std::string_view id, int count) {
@@ -707,6 +707,7 @@ void AppendConsoleLine(std::wstring line) {
 bool SpawnWanderingShadow();
 void SettleTerritoryDay();
 void EnsureSceneMonsters();
+bool DebugTeleportToLayer(int layerIndex);
 
 std::wstring Lowercase(std::wstring value) {
     std::transform(value.begin(), value.end(), value.begin(), [](wchar_t value) {
@@ -740,6 +741,7 @@ void ExecuteConsoleCommand() {
         AppendConsoleLine(L"shadow - spawn a wandering shadow near territory");
         AppendConsoleLine(L"day - settle one territory day");
         AppendConsoleLine(L"fog - reveal the entire current map");
+        AppendConsoleLine(L"tp <1-4> - teleport to the center of a world layer");
         AppendConsoleLine(L"debug - toggle collision outlines");
         AppendConsoleLine(L"clear - clear console output");
         return;
@@ -787,7 +789,21 @@ void ExecuteConsoleCommand() {
     std::wistringstream commandStream(command);
     std::wstring verb;
     commandStream >> verb;
-    if (Lowercase(verb) != L"add") {
+    const std::wstring lowerVerb = Lowercase(verb);
+    if (lowerVerb == L"tp" || lowerVerb == L"teleport" || lowerVerb == L"传送") {
+        std::wstring layerText;
+        std::wstring extra;
+        commandStream >> layerText >> extra;
+        wchar_t* end = nullptr;
+        const long layerIndex = std::wcstol(layerText.c_str(), &end, 10);
+        if (layerText.empty() || !end || *end != L'\0' || !extra.empty() || layerIndex < 1 || layerIndex > 4) {
+            AppendConsoleLine(L"Usage: tp <1-4>");
+            return;
+        }
+        DebugTeleportToLayer(static_cast<int>(layerIndex));
+        return;
+    }
+    if (lowerVerb != L"add") {
         AppendConsoleLine(L"Unknown command. Type help.");
         return;
     }
@@ -1121,7 +1137,69 @@ std::filesystem::path ResolveScenePath(const std::string& storedPath) {
     return std::filesystem::path(RPG_ASSET_DIR) / path;
 }
 
-bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view targetId) {
+bool IsDebugTeleportDestinationBlocked(
+    const rpg::Scene& scene,
+    const std::filesystem::path& scenePath,
+    rpg::Vec2 position) {
+    if (position.x - kPlayerRadius < 0.0f || position.y - kPlayerRadius < 0.0f ||
+        position.x + kPlayerRadius > rpg::SceneWorldWidth(scene) ||
+        position.y + kPlayerRadius > rpg::SceneWorldHeight(scene)) {
+        return true;
+    }
+    if (rpg::CircleIntersectsBlockedTerrain(scene, position, kPlayerRadius) ||
+        rpg::CircleIntersectsScene(scene, position, kPlayerRadius)) {
+        return true;
+    }
+
+    const std::wstring targetMap = scenePath.filename().wstring();
+    for (const Npc& npc : g_game.npcs) {
+        if (npc.following || npc.shadowForm || npc.workMap != targetMap) continue;
+        const float dx = position.x - npc.pos.x;
+        const float dy = position.y - npc.pos.y;
+        const float combinedRadius = kPlayerRadius + kNpcRadius;
+        if (dx * dx + dy * dy < combinedRadius * combinedRadius) return true;
+    }
+    return false;
+}
+
+bool FindSafeMapCenter(
+    const rpg::Scene& scene,
+    const std::filesystem::path& scenePath,
+    rpg::Vec2& destination) {
+    destination = {rpg::SceneWorldWidth(scene) * 0.5f, rpg::SceneWorldHeight(scene) * 0.5f};
+    if (!IsDebugTeleportDestinationBlocked(scene, scenePath, destination)) return true;
+
+    const int centerX = std::clamp(static_cast<int>(destination.x / kTileSize), 0, scene.mapWidth - 1);
+    const int centerY = std::clamp(static_cast<int>(destination.y / kTileSize), 0, scene.mapHeight - 1);
+    const auto tryTile = [&](int tx, int ty) {
+        if (tx < 0 || ty < 0 || tx >= scene.mapWidth || ty >= scene.mapHeight) return false;
+        const rpg::Vec2 candidate{
+            (static_cast<float>(tx) + 0.5f) * kTileSize,
+            (static_cast<float>(ty) + 0.5f) * kTileSize,
+        };
+        if (IsDebugTeleportDestinationBlocked(scene, scenePath, candidate)) return false;
+        destination = candidate;
+        return true;
+    };
+
+    const int maximumRadius = std::max(scene.mapWidth, scene.mapHeight);
+    for (int radius = 1; radius <= maximumRadius; ++radius) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (tryTile(centerX + dx, centerY - radius) ||
+                tryTile(centerX + dx, centerY + radius)) return true;
+        }
+        for (int dy = -radius + 1; dy < radius; ++dy) {
+            if (tryTile(centerX - radius, centerY + dy) ||
+                tryTile(centerX + radius, centerY + dy)) return true;
+        }
+    }
+    return false;
+}
+
+bool LoadRuntimeScene(
+    const std::filesystem::path& path,
+    std::string_view targetId,
+    bool useSafeMapCenter = false) {
     rpg::Scene nextScene;
     std::string error;
     if (!rpg::LoadSceneFromFile(path, nextScene, &error)) {
@@ -1133,7 +1211,9 @@ bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view target
     }
 
     rpg::Vec2 destination = nextScene.playerStart;
-    if (!targetId.empty()) {
+    if (useSafeMapCenter) {
+        if (!FindSafeMapCenter(nextScene, path, destination)) return false;
+    } else if (!targetId.empty()) {
         for (const rpg::SceneObject& object : nextScene.objects) {
             if (object.id == targetId && rpg::ObjectIsTeleport(object)) {
                 destination = object.pos;
@@ -1190,6 +1270,34 @@ void CenterCameraAt(Vec2 position) {
                             std::max(0.0f, worldW - kWindowWidth));
     g_game.camera.y = Clamp(position.y * renderScale - kWindowHeight * 0.5f, 0.0f,
                             std::max(0.0f, worldH - kWindowHeight));
+}
+
+bool DebugTeleportToLayer(int layerIndex) {
+    if (g_activeSaveDirectory.empty() || g_screen != AppScreen::Playing) {
+        AppendConsoleLine(L"No active save is available.");
+        return false;
+    }
+
+    const auto& layers = rpg::WorldLayers();
+    const auto layer = std::find_if(layers.begin(), layers.end(), [layerIndex](const rpg::WorldLayerDef& item) {
+        return item.index == layerIndex;
+    });
+    if (layer == layers.end()) {
+        AppendConsoleLine(L"World layer not found.");
+        return false;
+    }
+
+    const std::filesystem::path path = g_activeSaveDirectory / L"maps" / layer->fileName;
+    if (!LoadRuntimeScene(path, {}, true)) {
+        AppendConsoleLine(L"Teleport failed: no safe destination or map could not be loaded.");
+        return false;
+    }
+
+    CenterCameraAt(g_game.player.pos);
+    AppendConsoleLine(L"Teleported to layer " + std::to_wstring(layerIndex) + L" at a safe center position.");
+    g_game.pickupNotice = L"已传送到第 " + std::to_wstring(layerIndex) + L" 层";
+    g_game.pickupNoticeTime = 2.0f;
+    return true;
 }
 
 bool LoadSceneForDeath(const std::filesystem::path& path) {
@@ -2848,27 +2956,102 @@ void DrawWorldFog(HDC hdc, const RECT& client) {
     const std::vector<std::uint8_t>* explored = exploredIt == g_game.exploredTilesByScene.end()
         ? nullptr
         : &exploredIt->second;
+
+    const int clientWidth = client.right - client.left;
+    const int clientHeight = client.bottom - client.top;
+    if (clientWidth <= 0 || clientHeight <= 0 || g_game.scene.mapWidth <= 0 || g_game.scene.mapHeight <= 0) {
+        return;
+    }
+
+    if (!EnsureGdiPlus()) {
+        FillRectColor(hdc, client, RGB(13, 17, 19));
+        return;
+    }
+
     const float scale = RenderScale();
     const float tilePixels = kTileSize * scale;
-    const int left = std::clamp(static_cast<int>(std::floor(g_game.camera.x / tilePixels)), 0, g_game.scene.mapWidth - 1);
-    const int top = std::clamp(static_cast<int>(std::floor(g_game.camera.y / tilePixels)), 0, g_game.scene.mapHeight - 1);
-    const int right = std::clamp(static_cast<int>(std::ceil((g_game.camera.x + client.right) / tilePixels)), 0, g_game.scene.mapWidth - 1);
-    const int bottom = std::clamp(static_cast<int>(std::ceil((g_game.camera.y + client.bottom) / tilePixels)), 0, g_game.scene.mapHeight - 1);
-    for (int ty = top; ty <= bottom; ++ty) {
-        for (int tx = left; tx <= right; ++tx) {
-            const int index = ty * g_game.scene.mapWidth + tx;
-            const bool revealed = explored && index >= 0 && index < static_cast<int>(explored->size()) && (*explored)[index] != 0;
-            if (revealed) continue;
-            const RECT tile{
-                static_cast<LONG>(std::floor(tx * tilePixels - g_game.camera.x)),
-                static_cast<LONG>(std::floor(ty * tilePixels - g_game.camera.y)),
-                static_cast<LONG>(std::ceil((tx + 1) * tilePixels - g_game.camera.x)) + 1,
-                static_cast<LONG>(std::ceil((ty + 1) * tilePixels - g_game.camera.y)) + 1,
-            };
-            const int shade = ((tx * 17 + ty * 31) & 3) * 2;
-            FillRectColor(hdc, tile, RGB(13 + shade, 17 + shade, 19 + shade));
+
+    // The save remains tile-based, but the display mask samples nearby tiles so
+    // explored and unknown areas blend instead of exposing square tile edges.
+    constexpr int kMaskDownsample = 4;
+    constexpr int kMaximumMaskWidth = 320;
+    constexpr int kMaximumMaskHeight = 180;
+    constexpr float kBlendRadiusTiles = 2.25f;
+    constexpr int kUnknownAlpha = 250;
+    const int maskWidth = std::clamp((clientWidth + kMaskDownsample - 1) / kMaskDownsample, 1, kMaximumMaskWidth);
+    const int maskHeight = std::clamp((clientHeight + kMaskDownsample - 1) / kMaskDownsample, 1, kMaximumMaskHeight);
+
+    static std::unique_ptr<Gdiplus::Bitmap> fogMask;
+    static int fogMaskWidth = 0;
+    static int fogMaskHeight = 0;
+    if (!fogMask || fogMaskWidth != maskWidth || fogMaskHeight != maskHeight) {
+        fogMask = std::make_unique<Gdiplus::Bitmap>(maskWidth, maskHeight, PixelFormat32bppARGB);
+        fogMaskWidth = maskWidth;
+        fogMaskHeight = maskHeight;
+    }
+
+    Gdiplus::Rect lockRect(0, 0, maskWidth, maskHeight);
+    Gdiplus::BitmapData bitmapData{};
+    if (fogMask->LockBits(&lockRect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bitmapData) != Gdiplus::Ok) {
+        return;
+    }
+
+    const float blendRadiusSquared = kBlendRadiusTiles * kBlendRadiusTiles;
+    for (int my = 0; my < maskHeight; ++my) {
+        auto* row = reinterpret_cast<std::uint32_t*>(
+            static_cast<std::uint8_t*>(bitmapData.Scan0) + my * bitmapData.Stride);
+        const float screenY = (static_cast<float>(my) + 0.5f) * clientHeight / maskHeight;
+        const float worldTileY = (g_game.camera.y + screenY) / tilePixels;
+        const int baseTileY = static_cast<int>(std::floor(worldTileY));
+        for (int mx = 0; mx < maskWidth; ++mx) {
+            const float screenX = (static_cast<float>(mx) + 0.5f) * clientWidth / maskWidth;
+            const float worldTileX = (g_game.camera.x + screenX) / tilePixels;
+            const int baseTileX = static_cast<int>(std::floor(worldTileX));
+            float totalWeight = 0.0f;
+            float exploredWeight = 0.0f;
+
+            for (int ty = baseTileY - 2; ty <= baseTileY + 2; ++ty) {
+                const float dy = worldTileY - (static_cast<float>(ty) + 0.5f);
+                for (int tx = baseTileX - 2; tx <= baseTileX + 2; ++tx) {
+                    const float dx = worldTileX - (static_cast<float>(tx) + 0.5f);
+                    const float distanceSquared = dx * dx + dy * dy;
+                    if (distanceSquared >= blendRadiusSquared) {
+                        continue;
+                    }
+
+                    const float normalized = 1.0f - distanceSquared / blendRadiusSquared;
+                    const float weight = normalized * normalized;
+                    totalWeight += weight;
+                    if (tx >= 0 && tx < g_game.scene.mapWidth && ty >= 0 && ty < g_game.scene.mapHeight) {
+                        const int index = ty * g_game.scene.mapWidth + tx;
+                        if (explored && index < static_cast<int>(explored->size()) && (*explored)[index] != 0) {
+                            exploredWeight += weight;
+                        }
+                    }
+                }
+            }
+
+            float visibility = totalWeight > 0.0f ? exploredWeight / totalWeight : 0.0f;
+            visibility = Clamp((visibility - 0.04f) / 0.92f, 0.0f, 1.0f);
+            visibility = visibility * visibility * (3.0f - 2.0f * visibility);
+            const std::uint32_t alpha = static_cast<std::uint32_t>(std::round(kUnknownAlpha * (1.0f - visibility)));
+            row[mx] = (alpha << 24) | (13u << 16) | (17u << 8) | 19u;
         }
     }
+    fogMask->UnlockBits(&bitmapData);
+
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+    graphics.DrawImage(
+        fogMask.get(),
+        Gdiplus::Rect(client.left, client.top, clientWidth, clientHeight),
+        0,
+        0,
+        maskWidth,
+        maskHeight,
+        Gdiplus::UnitPixel);
 }
 
 void DrawDebugCircle(HDC hdc, Vec2 center, float radius, COLORREF color) {

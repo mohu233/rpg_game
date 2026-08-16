@@ -1,0 +1,13 @@
+{
+  "id": "rice",
+  "display_name": "水稻",
+  "max_stack": 99,
+  "color": "#d9d18a",
+  "icon": "items/crops/rice/icon.png",
+  "world_image": "items/crops/rice/world.png",
+  "source": "采集水稻获得",
+  "category": "crop",
+  "properties": {
+    "food": 1
+  }
+}

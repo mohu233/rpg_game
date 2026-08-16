@@ -1,0 +1,13 @@
+{
+  "id": "wheat",
+  "display_name": "小麦",
+  "max_stack": 99,
+  "color": "#d6b94d",
+  "icon": "items/crops/wheat/icon.png",
+  "world_image": "items/crops/wheat/world.png",
+  "source": "采集小麦或击杀怪物获得",
+  "category": "crop",
+  "properties": {
+    "food": 1
+  }
+}

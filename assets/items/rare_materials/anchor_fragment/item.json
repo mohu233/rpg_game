@@ -1,0 +1,13 @@
+{
+  "id": "anchor_fragment",
+  "display_name": "锚点碎片",
+  "max_stack": 10,
+  "color": "#b9e0d0",
+  "icon": "items/rare_materials/anchor_fragment/icon.png",
+  "world_image": "items/rare_materials/anchor_fragment/world.png",
+  "source": "击杀怪物极低概率获得",
+  "category": "fragment",
+  "properties": {
+    "rarity": 5
+  }
+}

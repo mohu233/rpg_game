@@ -5,14 +5,12 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "assets" / "player_walk_side_8.png"
-BASE = ROOT / "assets" / "player_walk_backup_20260805_134052.bmp"
-OUT_PNG = ROOT / "assets" / "player_walk_formatted.png"
-OUT_BMP = ROOT / "assets" / "player_walk.bmp"
+SOURCE = ROOT / "assets" / "characters" / "player" / "player_walk_side_8.png"
+BASE = ROOT / "art_source" / "player" / "player_walk_backup_20260805_134052.bmp"
+OUT_PNG = ROOT / "art_source" / "player" / "player_walk_formatted.png"
 
 FRAME = 96
 GRID = 4
-KEY = (255, 0, 255)
 
 
 def is_generated_background(pixel):
@@ -150,14 +148,10 @@ def build_sheet(frames):
 
 
 def save_outputs(sheet):
+    OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(OUT_PNG)
 
-    keyed = Image.new("RGB", sheet.size, KEY)
-    keyed.paste(sheet.convert("RGB"), mask=sheet.getchannel("A"))
-    keyed.save(OUT_BMP)
-
     print(f"wrote {OUT_PNG}")
-    print(f"wrote {OUT_BMP}")
 
 
 def main():

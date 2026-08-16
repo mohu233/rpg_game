@@ -49,12 +49,6 @@ function(configure_rpg_target target_name)
         msimg32
     )
 
-    add_custom_command(TARGET ${target_name} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets
-            $<TARGET_FILE_DIR:${target_name}>/assets
-    )
-
     if(MINGW)
         if(target_name STREQUAL "FreeWalkRpgDemo")
             target_link_options(${target_name} PRIVATE -municode)
@@ -74,6 +68,22 @@ endfunction()
 
 configure_rpg_target(FreeWalkRpgDemo)
 configure_rpg_target(SceneEditor)
+
+add_executable(RebuildAndPackAssets
+    tools/rebuild_and_pack_assets.cpp
+)
+
+target_compile_definitions(RebuildAndPackAssets PRIVATE
+    RPG_SOURCE_ASSET_DIR=L"${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    RPG_PACKAGED_ASSET_DIR=L"${CMAKE_CURRENT_BINARY_DIR}/assets"
+)
+
+target_compile_options(RebuildAndPackAssets PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    $<$<CXX_COMPILER_ID:GNU>:-finput-charset=UTF-8>
+)
+
+add_dependencies(RebuildAndPackAssets FreeWalkRpgDemo SceneEditor)
 
 enable_testing()
 

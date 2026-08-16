@@ -4,8 +4,7 @@ from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "assets" / "objects"
-KEY = (255, 0, 255)
+OUT = ROOT / "assets" / "objects" / "nature"
 
 
 def ellipse(draw, box, fill, outline, width=2):
@@ -17,7 +16,7 @@ def round_rect(draw, box, radius, fill, outline, width=2):
 
 
 def tree_oak():
-    im = Image.new("RGB", (118, 132), KEY)
+    im = Image.new("RGBA", (118, 132), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
 
     round_rect(draw, (47, 68, 71, 123), 8, (126, 89, 51), (65, 49, 32), 3)
@@ -35,7 +34,7 @@ def tree_oak():
 
 
 def stone_round():
-    im = Image.new("RGB", (62, 38), KEY)
+    im = Image.new("RGBA", (62, 38), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
 
     ellipse(draw, (0, 4, 61, 36), (124, 139, 146), (62, 77, 83), 3)
@@ -45,7 +44,7 @@ def stone_round():
 
 
 def bush():
-    im = Image.new("RGB", (74, 46), KEY)
+    im = Image.new("RGBA", (74, 46), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
 
     ellipse(draw, (2, 12, 42, 45), (64, 134, 77), (34, 83, 49), 3)
@@ -58,12 +57,13 @@ def bush():
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     images = {
-        "tree_oak.bmp": tree_oak(),
-        "stone_round.bmp": stone_round(),
-        "bush.bmp": bush(),
+        "tree_oak/tree_oak.png": tree_oak(),
+        "stone_round/stone_round.png": stone_round(),
+        "bush/bush.png": bush(),
     }
     for name, image in images.items():
         path = OUT / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         image.save(path)
         print(f"wrote {path}")
 

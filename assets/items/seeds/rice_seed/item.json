@@ -1,0 +1,25 @@
+{
+  "id": "rice_seed",
+  "display_name": "水稻种子",
+  "max_stack": 99,
+  "color": "#c8bd76",
+  "icon": "items/seeds/rice_seed/icon.png",
+  "world_image": "items/seeds/rice_seed/world.png",
+  "source": "水稻分解或击杀怪物获得",
+  "category": "seed",
+  "properties": {
+    "seed": 1,
+    "crop_days": 2,
+    "harvest_count": 2
+  },
+  "recipe": {
+    "station": "decompose",
+    "ingredients": [
+      {
+        "item": "rice",
+        "count": 1
+      }
+    ],
+    "output_count": 4
+  }
+}

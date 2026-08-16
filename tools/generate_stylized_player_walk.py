@@ -4,9 +4,8 @@ from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_SHEET = ROOT / "assets" / "player_walk_generated_sheet.png"
-OUT_PNG = ROOT / "assets" / "player_walk_formatted.png"
-OUT_BMP = ROOT / "assets" / "player_walk.bmp"
+OUT_SHEET = ROOT / "art_source" / "player" / "player_walk_generated_sheet.png"
+OUT_PNG = ROOT / "art_source" / "player" / "player_walk_formatted.png"
 
 FRAME = 96
 GRID = 4
@@ -294,11 +293,9 @@ def save_outputs(sheet):
     keyed = Image.new("RGB", sheet.size, KEY)
     keyed.paste(sheet.convert("RGB"), mask=sheet.getchannel("A"))
     keyed.save(OUT_SHEET)
-    keyed.save(OUT_BMP)
 
     print(f"wrote {OUT_SHEET}")
     print(f"wrote {OUT_PNG}")
-    print(f"wrote {OUT_BMP}")
 
 
 def main():

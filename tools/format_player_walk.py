@@ -5,13 +5,11 @@ from PIL import Image, ImageOps
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "assets" / "player_walk.png"
-OUT_PNG = ROOT / "assets" / "player_walk_formatted.png"
-OUT_BMP = ROOT / "assets" / "player_walk.bmp"
+SOURCE = ROOT / "art_source" / "player" / "player_walk.png"
+OUT_PNG = ROOT / "art_source" / "player" / "player_walk_formatted.png"
 
 FRAME = 96
 GRID = 4
-KEY = (255, 0, 255)
 
 
 def is_background(pixel):
@@ -154,14 +152,10 @@ def main():
             frame = normalize_frame(cells[src_row][src_col], mirror=mirror)
             sheet.alpha_composite(frame, (out_col * FRAME, out_row * FRAME))
 
+    OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(OUT_PNG)
 
-    keyed = Image.new("RGB", sheet.size, KEY)
-    keyed.paste(sheet.convert("RGB"), mask=sheet.getchannel("A"))
-    keyed.save(OUT_BMP)
-
     print(f"wrote {OUT_PNG}")
-    print(f"wrote {OUT_BMP}")
 
 
 if __name__ == "__main__":

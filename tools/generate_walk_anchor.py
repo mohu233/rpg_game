@@ -4,8 +4,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "assets" / "player_walk_anchor.png"
-OUT_LARGE = ROOT / "assets" / "player_walk_anchor_large.png"
+OUT = ROOT / "art_source" / "player" / "player_walk_anchor.png"
+OUT_LARGE = ROOT / "art_source" / "player" / "player_walk_anchor_large.png"
 
 FRAME = 96
 GRID = 4
@@ -201,6 +201,7 @@ def draw_front_back_pose(draw, ox, oy, name, bob, left_step, right_step, back=Fa
 
 
 def main():
+    OUT.parent.mkdir(parents=True, exist_ok=True)
     img = Image.new("RGBA", (FRAME * GRID, FRAME * GRID), BG)
     draw = ImageDraw.Draw(img)
 

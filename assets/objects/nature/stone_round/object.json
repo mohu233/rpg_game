@@ -1,0 +1,17 @@
+{
+  "type": "stone_round",
+  "display_name": "圆石",
+  "image": "stone_round.png",
+  "width": 62.0,
+  "height": 38.0,
+  "z_offset": 0.0,
+  "collision": {
+    "shape": "rect",
+    "x": -24.0,
+    "y": -23.0,
+    "w": 48.0,
+    "h": 22.0,
+    "radius": 0.0,
+    "blocks": true
+  }
+}

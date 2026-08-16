@@ -614,7 +614,7 @@ bool PromptOpenImageFile(HWND owner, std::filesystem::path& outPath) {
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"图片文件\0*.png;*.bmp;*.jpg;*.jpeg\0所有文件\0*.*\0";
+    ofn.lpstrFilter = L"PNG 图片\0*.png\0所有文件\0*.*\0";
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
     ofn.lpstrInitialDir = initialDir.c_str();
@@ -630,7 +630,7 @@ bool PromptOpenImageFile(HWND owner, std::filesystem::path& outPath) {
 
 bool PromptOpenSceneFile(HWND owner, std::filesystem::path& outPath) {
     wchar_t buffer[MAX_PATH * 4]{};
-    std::wstring initialDir = AssetPath(L"scenes").wstring();
+    std::wstring initialDir = AssetPath(L"maps").wstring();
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
@@ -650,7 +650,7 @@ bool PromptSaveSceneFile(HWND owner, const std::filesystem::path& current, std::
     wchar_t buffer[MAX_PATH * 4]{};
     const std::wstring currentName = current.empty() ? L"scene.json" : current.filename().wstring();
     wcsncpy_s(buffer, currentName.c_str(), _TRUNCATE);
-    std::wstring initialDir = AssetPath(L"scenes").wstring();
+    std::wstring initialDir = AssetPath(L"maps").wstring();
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;

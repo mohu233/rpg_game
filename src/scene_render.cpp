@@ -17,14 +17,9 @@ namespace {
 #define RPG_ASSET_DIR L"assets"
 #endif
 
-constexpr COLORREF kTransparentKey = RGB(255, 0, 255);
-
 struct ObjectBitmap {
     std::string type;
     std::unique_ptr<Gdiplus::Bitmap> alphaBitmap;
-    HBITMAP bitmap = nullptr;
-    HDC dc = nullptr;
-    HGDIOBJ oldBitmap = nullptr;
     int width = 0;
     int height = 0;
     bool attempted = false;
@@ -97,9 +92,9 @@ ObjectBitmap& BitmapCacheFor(std::string_view type) {
     return g_objectBitmaps.back();
 }
 
-bool LoadObjectBitmap(HDC hdc, const SceneObjectDef& def, ObjectBitmap& cache) {
+bool LoadObjectBitmap(const SceneObjectDef& def, ObjectBitmap& cache) {
     if (cache.attempted) {
-        return cache.alphaBitmap || (cache.bitmap && cache.dc);
+        return cache.alphaBitmap != nullptr;
     }
     cache.attempted = true;
 
@@ -108,44 +103,16 @@ bool LoadObjectBitmap(HDC hdc, const SceneObjectDef& def, ObjectBitmap& cache) {
     }
 
     const std::filesystem::path imagePath = AssetPath(def.bitmapPath);
-    if (imagePath.extension() == L".png") {
-        if (!EnsureGdiPlus()) {
-            return false;
-        }
-        cache.alphaBitmap = std::make_unique<Gdiplus::Bitmap>(imagePath.c_str());
-        if (!cache.alphaBitmap || cache.alphaBitmap->GetLastStatus() != Gdiplus::Ok) {
-            cache.alphaBitmap.reset();
-            return false;
-        }
-        cache.width = static_cast<int>(cache.alphaBitmap->GetWidth());
-        cache.height = static_cast<int>(cache.alphaBitmap->GetHeight());
-        return cache.width > 0 && cache.height > 0;
-    }
-
-    const std::wstring path = imagePath.wstring();
-    cache.bitmap = static_cast<HBITMAP>(LoadImageW(
-        nullptr,
-        path.c_str(),
-        IMAGE_BITMAP,
-        0,
-        0,
-        LR_LOADFROMFILE | LR_CREATEDIBSECTION));
-
-    if (!cache.bitmap) {
+    if (imagePath.extension() != L".png" || !EnsureGdiPlus()) {
         return false;
     }
-
-    BITMAP info{};
-    GetObjectW(cache.bitmap, sizeof(info), &info);
-    cache.width = info.bmWidth;
-    cache.height = info.bmHeight;
-    cache.dc = CreateCompatibleDC(hdc);
-    if (!cache.dc) {
-        DeleteObject(cache.bitmap);
-        cache.bitmap = nullptr;
+    cache.alphaBitmap = std::make_unique<Gdiplus::Bitmap>(imagePath.c_str());
+    if (!cache.alphaBitmap || cache.alphaBitmap->GetLastStatus() != Gdiplus::Ok) {
+        cache.alphaBitmap.reset();
         return false;
     }
-    cache.oldBitmap = SelectObject(cache.dc, cache.bitmap);
+    cache.width = static_cast<int>(cache.alphaBitmap->GetWidth());
+    cache.height = static_cast<int>(cache.alphaBitmap->GetHeight());
     return cache.width > 0 && cache.height > 0;
 }
 
@@ -156,7 +123,7 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
     }
 
     ObjectBitmap& cache = BitmapCacheFor(object.type);
-    if (!LoadObjectBitmap(hdc, *def, cache)) {
+    if (!LoadObjectBitmap(*def, cache)) {
         return false;
     }
 
@@ -167,58 +134,28 @@ bool DrawObjectBitmap(HDC hdc, const SceneObject& object, float cameraX, float c
         return false;
     }
 
-    if (cache.alphaBitmap) {
-        Gdiplus::Graphics graphics(hdc);
-        graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
-        graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
-        graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
-        graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
-        Gdiplus::ImageAttributes attributes;
-        Gdiplus::ColorMatrix matrix = {
-            1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, static_cast<float>(opacity) / 255.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
-        };
-        attributes.SetColorMatrix(&matrix, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
-        return graphics.DrawImage(
-                   cache.alphaBitmap.get(),
-                   Gdiplus::Rect(bounds.left, bounds.top, width, height),
-                   0,
-                   0,
-                   cache.width,
-                   cache.height,
-                   Gdiplus::UnitPixel, &attributes) == Gdiplus::Ok;
-    }
-
-    if (opacity == 255) {
-        TransparentBlt(
-        hdc,
-        bounds.left,
-        bounds.top,
-        width,
-        height,
-        cache.dc,
-        0,
-        0,
-        cache.width,
-        cache.height,
-        kTransparentKey);
-    } else {
-        HDC preview = CreateCompatibleDC(hdc);
-        HBITMAP bitmap = CreateCompatibleBitmap(hdc, width, height);
-        HGDIOBJ oldBitmap = SelectObject(preview, bitmap);
-        BitBlt(preview, 0, 0, width, height, hdc, bounds.left, bounds.top, SRCCOPY);
-        TransparentBlt(preview, 0, 0, width, height, cache.dc, 0, 0, cache.width, cache.height, kTransparentKey);
-        BLENDFUNCTION blend{AC_SRC_OVER, 0, opacity, 0};
-        AlphaBlend(hdc, bounds.left, bounds.top, width, height, preview, 0, 0, width, height, blend);
-        SelectObject(preview, oldBitmap);
-        DeleteObject(bitmap);
-        DeleteDC(preview);
-    }
-
-    return true;
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    Gdiplus::ImageAttributes attributes;
+    Gdiplus::ColorMatrix matrix = {
+        1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, static_cast<float>(opacity) / 255.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+    };
+    attributes.SetColorMatrix(&matrix, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
+    return graphics.DrawImage(
+               cache.alphaBitmap.get(),
+               Gdiplus::Rect(bounds.left, bounds.top, width, height),
+               0,
+               0,
+               cache.width,
+               cache.height,
+               Gdiplus::UnitPixel, &attributes) == Gdiplus::Ok;
 }
 
 void DrawTree(HDC hdc, int sx, int sy) {
@@ -315,18 +252,6 @@ void DrawSceneObjectCollision(HDC hdc, const SceneObject& object, float cameraX,
 void ReleaseSceneRenderResources() {
     for (ObjectBitmap& cache : g_objectBitmaps) {
         cache.alphaBitmap.reset();
-        if (cache.dc) {
-            if (cache.oldBitmap) {
-                SelectObject(cache.dc, cache.oldBitmap);
-            }
-            DeleteDC(cache.dc);
-            cache.dc = nullptr;
-        }
-        if (cache.bitmap) {
-            DeleteObject(cache.bitmap);
-            cache.bitmap = nullptr;
-        }
-        cache.oldBitmap = nullptr;
     }
     g_objectBitmaps.clear();
     if (g_gdiplusToken != 0) {

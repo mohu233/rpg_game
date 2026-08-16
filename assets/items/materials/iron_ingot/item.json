@@ -1,0 +1,26 @@
+{
+  "id": "iron_ingot",
+  "display_name": "铁锭",
+  "max_stack": 50,
+  "color": "#9ba6a9",
+  "icon": "items/materials/iron_ingot/icon.png",
+  "world_image": "items/materials/iron_ingot/world.png",
+  "source": "熔炉合成",
+  "category": "ingot",
+  "properties": {
+    "material_grade": 2
+  },
+  "recipe": {
+    "station": "furnace",
+    "ingredients": [
+      {
+        "item": "iron_ore",
+        "count": 2
+      },
+      {
+        "item": "wood",
+        "count": 1
+      }
+    ]
+  }
+}

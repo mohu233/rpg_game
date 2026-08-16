@@ -5,13 +5,11 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
-KIT = ROOT / "assets" / "walk_generation_kit"
+KIT = ROOT / "art_source" / "reference" / "walk_generation_kit"
 INPUT_DIR = KIT / "ai_outputs"
-OUT_PNG = ROOT / "assets" / "player_walk_formatted.png"
-OUT_BMP = ROOT / "assets" / "player_walk.bmp"
+OUT_PNG = ROOT / "art_source" / "player" / "player_walk_formatted.png"
 
 FRAME = 96
-KEY = (255, 0, 255)
 
 ORDER = [
     "01_S1_side_right_contact.png",
@@ -126,14 +124,10 @@ def main():
         y = (index // 4) * FRAME
         sheet.alpha_composite(frame, (x, y))
 
+    OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(OUT_PNG)
 
-    keyed = Image.new("RGB", sheet.size, KEY)
-    keyed.paste(sheet.convert("RGB"), mask=sheet.getchannel("A"))
-    keyed.save(OUT_BMP)
-
     print(f"wrote {OUT_PNG}")
-    print(f"wrote {OUT_BMP}")
 
 
 if __name__ == "__main__":

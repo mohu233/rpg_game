@@ -1,0 +1,13 @@
+{
+  "id": "copper_ore",
+  "display_name": "铜矿石",
+  "max_stack": 50,
+  "color": "#4f9b7c",
+  "icon": "items/raw_resources/copper_ore/icon.png",
+  "world_image": "items/raw_resources/copper_ore/world.png",
+  "source": "挖掘铜矿石获得",
+  "category": "ore",
+  "properties": {
+    "material_grade": 1
+  }
+}
