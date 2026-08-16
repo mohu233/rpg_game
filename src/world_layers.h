@@ -24,6 +24,7 @@ struct WorldLayerDef {
 const std::array<WorldLayerDef, 4>& WorldLayers();
 const WorldLayerDef* FindWorldLayer(const std::filesystem::path& path);
 std::filesystem::path WorldLayerPath(const std::filesystem::path& mapsRoot, const WorldLayerDef& layer);
+bool EnsureWorldLayerLandmarks(Scene& scene, const WorldLayerDef& layer);
 Scene GenerateWorldLayer(const WorldLayerDef& layer, int width, int height, float resourceMultiplier = 1.0f);
 void ResizeWorldLayer(Scene& scene, const WorldLayerDef& layer, int width, int height);
 void RegenerateWorldLayerResources(Scene& scene, const WorldLayerDef& layer);

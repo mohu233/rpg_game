@@ -1,0 +1,21 @@
+{
+  "type": "campfire",
+  "display_name": "篝火",
+  "image": "campfire.png",
+  "width": 48.0,
+  "height": 88.0,
+  "z_offset": 0.0,
+  "building": true,
+  "footprint_width": 1,
+  "footprint_height": 1,
+  "draggable": false,
+  "placeable": true,
+  "collision": {
+    "shape": "rect",
+    "x": -24.0,
+    "y": -48.0,
+    "w": 48.0,
+    "h": 48.0,
+    "blocks": true
+  }
+}

@@ -887,6 +887,9 @@ bool LoadSceneFromFile(const std::filesystem::path& path, Scene& scene, std::str
         object.collision = ParseCollision(block, def);
         object.targetScene = FindStringField(block, "target_scene").value_or("");
         object.targetId = FindStringField(block, "target_id").value_or("");
+        object.cropId = FindStringField(block, "crop_id").value_or("");
+        object.cropGrowthDays = std::max(0, static_cast<int>(std::lround(
+            FindFloatField(block, "crop_growth_days").value_or(0.0f))));
         loaded.objects.push_back(object);
         ++index;
     }
@@ -917,7 +920,7 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
     }
 
     out << "{\n";
-    out << "  \"version\": 3,\n";
+    out << "  \"version\": 4,\n";
     out << "  \"width\": " << scene.mapWidth << ",\n";
     out << "  \"height\": " << scene.mapHeight << ",\n";
     out << "  \"terrain\": {\n";
@@ -982,6 +985,10 @@ bool SaveSceneToFile(const std::filesystem::path& path, const Scene& scene, std:
         }
         if (!object.targetId.empty()) {
             out << ",\n      \"target_id\": \"" << object.targetId << "\"";
+        }
+        if (!object.cropId.empty()) {
+            out << ",\n      \"crop_id\": \"" << object.cropId << "\"";
+            out << ",\n      \"crop_growth_days\": " << std::max(0, object.cropGrowthDays);
         }
         out << "\n";
         out << "    }" << (i + 1 == scene.objects.size() ? "\n" : ",\n");

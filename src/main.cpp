@@ -161,6 +161,12 @@ struct ItemStack {
     int count = 0;
 };
 
+enum class BuildingToolMode {
+    Move,
+    Farmland,
+    Territory,
+};
+
 struct Inventory {
     std::array<ItemStack, kInventorySlotCount> slots;
     std::array<ItemStack, kSpiritSlotCount> spiritSlots;
@@ -179,7 +185,13 @@ struct Inventory {
     std::string placementObjectType;
     POINT placementTile{};
     bool placementValid = false;
+    BuildingToolMode buildingToolMode = BuildingToolMode::Move;
+    bool movingExistingBuilding = false;
+    rpg::SceneObject movingBuilding;
+    bool placingCraftedBuilding = false;
+    std::vector<ItemStack> reservedBuildingMaterials;
     bool selectingTerritory = false;
+    bool selectionRemoving = false;
     POINT territoryStartTile{};
     POINT territoryEndTile{};
 };
@@ -194,9 +206,21 @@ struct WorldPickup {
 enum class AnchorPanelTab {
     Storage,
     Workbench,
+    Crafting,
     Residents,
     Work,
     Technology,
+};
+
+enum class CraftingStation {
+    Workbench,
+    Decompose,
+    Production,
+};
+
+enum class CraftingCategory {
+    Items,
+    Buildings,
 };
 
 enum class DeathPhase {
@@ -215,6 +239,8 @@ struct Game {
     AnchorPanelTab anchorPanelTab = AnchorPanelTab::Residents;
     int anchorSelectedNpc = -1;
     int anchorSelectedWorkbenchRecipe = 0;
+    CraftingStation craftingStation = CraftingStation::Workbench;
+    CraftingCategory craftingCategory = CraftingCategory::Items;
     std::set<std::string> unlockedBlueprints{"territory_anchor"};
     int territoryLevel = 1;
     float territoryStability = 100.0f;
@@ -315,7 +341,11 @@ std::unique_ptr<Gdiplus::Bitmap> g_anchorButtonIcon;
 bool g_anchorButtonIconAttempted = false;
 
 void SaveCurrentGame();
+void SaveCurrentScene();
+bool StoreAnchorItem(ItemStack& incoming);
 bool UpdateDeathSequence(float dt);
+void CancelBuildingPlacement();
+void DrawCenteredText(HDC hdc, const std::wstring& text, const RECT& rect, COLORREF color, int fontSize);
 
 float RenderScale() {
     return kWorldScale * g_game.zoom;
@@ -709,6 +739,7 @@ void ExecuteConsoleCommand() {
         AppendConsoleLine(L"add monster/怪物 <quantity> - spawn at mouse");
         AppendConsoleLine(L"shadow - spawn a wandering shadow near territory");
         AppendConsoleLine(L"day - settle one territory day");
+        AppendConsoleLine(L"fog - reveal the entire current map");
         AppendConsoleLine(L"debug - toggle collision outlines");
         AppendConsoleLine(L"clear - clear console output");
         return;
@@ -729,6 +760,22 @@ void ExecuteConsoleCommand() {
         AppendConsoleLine(g_console.showCollisionLines
             ? L"Collision outlines enabled."
             : L"Collision outlines disabled.");
+        return;
+    }
+    if (Lowercase(command) == L"fog" || Lowercase(command) == L"fog clear" || Lowercase(command) == L"迷雾") {
+        if (g_currentScenePath.empty() || g_game.scene.mapWidth <= 0 || g_game.scene.mapHeight <= 0) {
+            AppendConsoleLine(L"No active map is available.");
+            return;
+        }
+        const int tileCount = g_game.scene.mapWidth * g_game.scene.mapHeight;
+        std::vector<std::uint8_t>& explored =
+            g_game.exploredTilesByScene[g_currentScenePath.filename().wstring()];
+        explored.assign(tileCount, 1);
+        g_game.explorationDirty = true;
+        SaveCurrentGame();
+        AppendConsoleLine(L"Fog cleared for the current map and saved.");
+        g_game.pickupNotice = L"当前地图迷雾已全部清除";
+        g_game.pickupNoticeTime = 2.0f;
         return;
     }
     if (Lowercase(command) == L"day") {
@@ -949,6 +996,10 @@ bool LoadSavedGame(const std::filesystem::path& saveDirectory) {
         g_menuStatus = L"存档地图损坏或缺失";
         return false;
     }
+    if (const rpg::WorldLayerDef* layer = rpg::FindWorldLayer(scenePath);
+        layer && rpg::EnsureWorldLayerLandmarks(g_game.scene, *layer)) {
+        rpg::SaveSceneToFile(scenePath, g_game.scene);
+    }
     rpg::InvalidateTerritoryRenderCache();
     g_activeSaveDirectory = saveDirectory;
     g_currentScenePath = scenePath;
@@ -1076,6 +1127,10 @@ bool LoadRuntimeScene(const std::filesystem::path& path, std::string_view target
     if (!rpg::LoadSceneFromFile(path, nextScene, &error)) {
         return false;
     }
+    if (const rpg::WorldLayerDef* layer = rpg::FindWorldLayer(path);
+        layer && rpg::EnsureWorldLayerLandmarks(nextScene, *layer)) {
+        rpg::SaveSceneToFile(path, nextScene);
+    }
 
     rpg::Vec2 destination = nextScene.playerStart;
     if (!targetId.empty()) {
@@ -1141,6 +1196,10 @@ bool LoadSceneForDeath(const std::filesystem::path& path) {
     rpg::Scene nextScene;
     std::string error;
     if (!rpg::LoadSceneFromFile(path, nextScene, &error)) return false;
+    if (const rpg::WorldLayerDef* layer = rpg::FindWorldLayer(path);
+        layer && rpg::EnsureWorldLayerLandmarks(nextScene, *layer)) {
+        rpg::SaveSceneToFile(path, nextScene);
+    }
     if (!g_currentScenePath.empty()) rpg::SaveSceneToFile(g_currentScenePath, g_game.scene);
     ReleaseBackgroundResources();
     g_game.scene = std::move(nextScene);
@@ -1404,6 +1463,47 @@ int ConsumeAnchorFood(int required) {
     return std::min(supplied, required);
 }
 
+int ItemPropertyInt(std::string_view itemId, std::string_view property, int fallback) {
+    const rpg::ItemDef* def = rpg::FindItemDef(itemId);
+    if (!def) return fallback;
+    const auto value = def->properties.find(std::string(property));
+    return value == def->properties.end() ? fallback : static_cast<int>(std::lround(value->second));
+}
+
+std::string CropIdForSeed(std::string_view seedId) {
+    if (ItemPropertyInt(seedId, "seed", 0) <= 0 || seedId.size() <= 5 || seedId.substr(seedId.size() - 5) != "_seed") {
+        return {};
+    }
+    return std::string(seedId.substr(0, seedId.size() - 5));
+}
+
+std::string SeedIdForCrop(std::string_view cropId) {
+    const std::string seedId = std::string(cropId) + "_seed";
+    return CropIdForSeed(seedId).empty() ? std::string{} : seedId;
+}
+
+int CropGrowthDays(std::string_view cropId) {
+    const std::string seedId = SeedIdForCrop(cropId);
+    return seedId.empty() ? 2 : std::max(1, ItemPropertyInt(seedId, "crop_days", 2));
+}
+
+int CropHarvestCount(std::string_view cropId) {
+    const std::string seedId = SeedIdForCrop(cropId);
+    return seedId.empty() ? 1 : std::max(1, ItemPropertyInt(seedId, "harvest_count", 1));
+}
+
+int AdvanceCropGrowth() {
+    int matured = 0;
+    for (rpg::SceneObject& object : g_game.scene.objects) {
+        if (object.type != "farmland" || object.cropId.empty()) continue;
+        const int requiredDays = CropGrowthDays(object.cropId);
+        if (object.cropGrowthDays >= requiredDays) continue;
+        ++object.cropGrowthDays;
+        if (object.cropGrowthDays >= requiredDays) ++matured;
+    }
+    return matured;
+}
+
 void SettleTerritoryDay() {
     const int demand = static_cast<int>(g_game.npcs.size());
     const int supplied = ConsumeAnchorFood(demand);
@@ -1413,6 +1513,7 @@ void SettleTerritoryDay() {
     if (overload > 0) change -= 10.0f + overload * 0.5f;
     g_game.territoryStability = Clamp(g_game.territoryStability + change, 0.0f, 100.0f);
     ++g_game.territoryDaysPassed;
+    const int maturedCrops = AdvanceCropGrowth();
 
     if (missing > 0) {
         g_game.pickupNotice = L"领地缺粮：" + std::to_wstring(missing) + L" 名居民未获得食物，稳定度下降";
@@ -1420,8 +1521,11 @@ void SettleTerritoryDay() {
     } else if (overload > 0) {
         g_game.pickupNotice = L"现实承载超限，稳定度正在下降";
         g_game.pickupNoticeTime = 3.0f;
+    } else if (maturedCrops > 0) {
+        g_game.pickupNotice = std::to_wstring(maturedCrops) + L" 块耕地的作物已经成熟";
+        g_game.pickupNoticeTime = 3.0f;
     }
-    SaveCurrentGame();
+    SaveCurrentScene();
 }
 
 void UpdateTerritorySystems(float dt) {
@@ -1943,6 +2047,102 @@ bool StoreAnchorItem(ItemStack& incoming) {
     return false;
 }
 
+int AnchorStoredItemCount(std::string_view id) {
+    int count = 0;
+    for (const ItemStack& item : g_game.anchorStorage) if (item.id == id) count += item.count;
+    return count;
+}
+
+bool AnchorCanStore(std::string_view id, int count) {
+    const rpg::ItemDef* def = rpg::FindItemDef(id);
+    if (!def) return false;
+    int capacity = 0;
+    for (const ItemStack& item : g_game.anchorStorage) {
+        if (item.id.empty()) capacity += def->maxStack;
+        else if (item.id == id) capacity += std::max(0, def->maxStack - item.count);
+        if (capacity >= count) return true;
+    }
+    return false;
+}
+
+void ConsumeAnchorStoredItem(std::string_view id, int count) {
+    for (ItemStack& item : g_game.anchorStorage) {
+        if (count <= 0) break;
+        if (item.id != id || item.count <= 0) continue;
+        const int removed = std::min(count, item.count);
+        item.count -= removed;
+        count -= removed;
+        if (item.count <= 0) item = {};
+    }
+}
+
+bool RunNpcFurnace(std::wstring& result) {
+    struct SmeltRecipe { const char* ore; const char* ingot; };
+    constexpr SmeltRecipe recipes[] = {
+        {"iron_ore", "iron_ingot"}, {"copper_ore", "copper_ingot"},
+        {"silver_ore", "silver_ingot"}, {"gold_ore", "gold_ingot"},
+    };
+    if (AnchorStoredItemCount("wood") < 1) return false;
+    for (const SmeltRecipe& recipe : recipes) {
+        if (AnchorStoredItemCount(recipe.ore) < 2 || !AnchorCanStore(recipe.ingot, 1)) continue;
+        ConsumeAnchorStoredItem(recipe.ore, 2);
+        ConsumeAnchorStoredItem("wood", 1);
+        ItemStack output = MakeItemStack(recipe.ingot, 1);
+        StoreAnchorItem(output);
+        const rpg::ItemDef* def = rpg::FindItemDef(recipe.ingot);
+        result = L"完成熔炼：" + (def ? def->displayName : L"矿锭");
+        return true;
+    }
+    return false;
+}
+
+bool RunNpcSawmill(std::wstring& result) {
+    struct SawRecipe { const char* wood; const char* plank; };
+    constexpr SawRecipe recipes[] = {{"exotic_wood", "exotic_plank"}, {"wood", "plank"}};
+    for (const SawRecipe& recipe : recipes) {
+        if (AnchorStoredItemCount(recipe.wood) < 1 || !AnchorCanStore(recipe.plank, 2)) continue;
+        ConsumeAnchorStoredItem(recipe.wood, 1);
+        ItemStack output = MakeItemStack(recipe.plank, 2);
+        StoreAnchorItem(output);
+        const rpg::ItemDef* def = rpg::FindItemDef(recipe.plank);
+        result = L"完成加工：" + (def ? def->displayName : L"木板") + L" x2";
+        return true;
+    }
+    return false;
+}
+
+bool RunNpcFarm(std::wstring& result) {
+    for (rpg::SceneObject& farmland : g_game.scene.objects) {
+        if (farmland.type != "farmland" || farmland.cropId.empty() ||
+            farmland.cropGrowthDays < CropGrowthDays(farmland.cropId)) continue;
+        const int count = CropHarvestCount(farmland.cropId);
+        if (!AnchorCanStore(farmland.cropId, count)) continue;
+        ItemStack output = MakeItemStack(farmland.cropId, count);
+        const std::wstring cropName = output.displayName;
+        StoreAnchorItem(output);
+        farmland.cropId.clear();
+        farmland.cropGrowthDays = 0;
+        result = L"收获：" + cropName + L" x" + std::to_wstring(count);
+        return true;
+    }
+    constexpr const char* seedIds[] = {
+        "rice_seed", "corn_seed", "potato_seed", "sweet_potato_seed", "cabbage_seed",
+    };
+    for (rpg::SceneObject& farmland : g_game.scene.objects) {
+        if (farmland.type != "farmland" || !farmland.cropId.empty()) continue;
+        for (const char* seedId : seedIds) {
+            if (AnchorStoredItemCount(seedId) <= 0) continue;
+            ConsumeAnchorStoredItem(seedId, 1);
+            farmland.cropId = CropIdForSeed(seedId);
+            farmland.cropGrowthDays = 0;
+            const rpg::ItemDef* def = rpg::FindItemDef(seedId);
+            result = L"完成播种：" + (def ? def->displayName : L"种子");
+            return true;
+        }
+    }
+    return false;
+}
+
 bool UnloadNpcCargo(Npc& npc) {
     bool emptied = true;
     for (NpcCargoStack& cargo : npc.cargo) {
@@ -2052,8 +2252,23 @@ bool UpdateNpcTask(int npcIndex, float dt) {
             return true;
         }
         const Vec2 position{facility->pos.x, facility->pos.y};
-        if (Distance(npc.pos, position) > 70.0f) MoveNpcToward(npcIndex, position, 72.0f, dt, false);
-        else npc.workTimer += dt;
+        if (Distance(npc.pos, position) > 70.0f) {
+            MoveNpcToward(npcIndex, position, 72.0f, dt, false);
+        } else {
+            npc.workTimer += dt;
+            if (npc.workTimer >= 5.0f) {
+                npc.workTimer = 0.0f;
+                std::wstring result;
+                const bool produced = facility->type == "furnace" ? RunNpcFurnace(result) :
+                                      (facility->type == "sawmill" ? RunNpcSawmill(result) :
+                                      (facility->type == "farmland" ? RunNpcFarm(result) : false));
+                if (produced) {
+                    g_game.pickupNotice = npc.name + L" " + result;
+                    g_game.pickupNoticeTime = 2.0f;
+                    SaveCurrentScene();
+                }
+            }
+        }
         return true;
     }
 
@@ -2473,6 +2688,49 @@ void DrawTextLine(HDC hdc, const std::wstring& text, int x, int y, COLORREF colo
     TextOutW(hdc, x, y, text.c_str(), static_cast<int>(text.size()));
 }
 
+void DrawTeleportMapMarker(HDC hdc, int x, int y) {
+    constexpr int radius = 8;
+    const POINT diamond[] = {
+        {x, y - radius},
+        {x + radius, y},
+        {x, y + radius},
+        {x - radius, y},
+    };
+    HBRUSH brush = CreateSolidBrush(RGB(32, 105, 119));
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(115, 235, 247));
+    HGDIOBJ previousBrush = SelectObject(hdc, brush);
+    HGDIOBJ previousPen = SelectObject(hdc, pen);
+    Polygon(hdc, diamond, static_cast<int>(std::size(diamond)));
+    SelectObject(hdc, previousPen);
+    SelectObject(hdc, previousBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+
+    HBRUSH centerBrush = CreateSolidBrush(RGB(236, 255, 249));
+    previousBrush = SelectObject(hdc, centerBrush);
+    previousPen = SelectObject(hdc, GetStockObject(NULL_PEN));
+    Ellipse(hdc, x - 2, y - 2, x + 3, y + 3);
+    SelectObject(hdc, previousPen);
+    SelectObject(hdc, previousBrush);
+    DeleteObject(centerBrush);
+}
+
+void DrawRitualAltarMapMarker(HDC hdc, int x, int y) {
+    HBRUSH brush = CreateSolidBrush(RGB(103, 55, 72));
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(245, 197, 96));
+    HGDIOBJ previousBrush = SelectObject(hdc, brush);
+    HGDIOBJ previousPen = SelectObject(hdc, pen);
+    Ellipse(hdc, x - 8, y - 8, x + 9, y + 9);
+    MoveToEx(hdc, x - 5, y, nullptr);
+    LineTo(hdc, x + 6, y);
+    MoveToEx(hdc, x, y - 5, nullptr);
+    LineTo(hdc, x, y + 6);
+    SelectObject(hdc, previousPen);
+    SelectObject(hdc, previousBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
 void DrawWorldMap(HDC hdc, const RECT& client) {
     if (!g_game.mapOpen) return;
 
@@ -2498,6 +2756,14 @@ void DrawWorldMap(HDC hdc, const RECT& client) {
     SelectObject(hdc, oldPen);
     DeleteObject(border);
     DrawTextLine(hdc, L"地图", panel.left + 16, panel.top + 12, RGB(224, 235, 207));
+    DrawTeleportMapMarker(hdc, panel.left + 92, panel.top + 21);
+    DrawTextLine(hdc, L"传送点", panel.left + 106, panel.top + 12, RGB(137, 225, 232));
+    if (std::any_of(g_game.scene.objects.begin(), g_game.scene.objects.end(), [](const rpg::SceneObject& object) {
+            return object.type == "ending_ritual_altar";
+        })) {
+        DrawRitualAltarMapMarker(hdc, panel.left + 190, panel.top + 21);
+        DrawTextLine(hdc, L"仪式祭坛", panel.left + 204, panel.top + 12, RGB(238, 202, 126));
+    }
     DrawTextLine(hdc, L"M 关闭", panel.right - 78, panel.top + 12, RGB(170, 189, 177));
     FillRectColor(hdc, mapRect, RGB(17, 22, 24));
 
@@ -2541,10 +2807,17 @@ void DrawWorldMap(HDC hdc, const RECT& client) {
         const int x = static_cast<int>(std::round(originX + (tx + 0.5f) * mapScale));
         const int y = static_cast<int>(std::round(originY + (ty + 0.5f) * mapScale));
         const rpg::SceneObjectDef* def = rpg::FindObjectDef(object.type);
+        if (object.type == "ending_ritual_altar") {
+            DrawRitualAltarMapMarker(hdc, x, y);
+            continue;
+        }
+        if (rpg::ObjectIsTeleport(object)) {
+            DrawTeleportMapMarker(hdc, x, y);
+            continue;
+        }
         COLORREF color = RGB(200, 174, 98);
         int radius = 3;
-        if (rpg::ObjectIsTeleport(object)) color = RGB(91, 207, 224);
-        else if (def && def->building) { color = RGB(204, 144, 79); radius = 5; }
+        if (def && def->building) { color = RGB(204, 144, 79); radius = 5; }
         else if (def && def->visual == rpg::ObjectVisual::TreeOak) { color = RGB(54, 142, 80); radius = 4; }
         else if (def && def->visual == rpg::ObjectVisual::StoneRound) color = RGB(159, 166, 173);
         else if (def && def->visual == rpg::ObjectVisual::Bush) { color = RGB(99, 170, 86); radius = 2; }
@@ -2902,6 +3175,18 @@ bool PlacementObjectsOverlap(const rpg::SceneObject& a, const rpg::SceneObject& 
     return RectsOverlap(aRect, bRect);
 }
 
+bool BuildingFootprintsOverlap(const rpg::SceneObject& a, const rpg::SceneObject& b) {
+    const rpg::SceneObjectDef* aDef = rpg::FindObjectDef(a.type);
+    const rpg::SceneObjectDef* bDef = rpg::FindObjectDef(b.type);
+    if (!aDef || !bDef || !aDef->building || !bDef->building) return false;
+    const POINT aOrigin = ObjectFootprintOrigin(a);
+    const POINT bOrigin = ObjectFootprintOrigin(b);
+    return aOrigin.x < bOrigin.x + bDef->footprintWidth &&
+           aOrigin.x + aDef->footprintWidth > bOrigin.x &&
+           aOrigin.y < bOrigin.y + bDef->footprintHeight &&
+           aOrigin.y + aDef->footprintHeight > bOrigin.y;
+}
+
 const std::string* PlacementObjectTypeForItem(const ItemStack& item) {
     if (item.id == "territory_anchor") return &item.id;
     const rpg::SceneObjectDef* object = rpg::FindObjectDef(item.id);
@@ -2917,6 +3202,17 @@ rpg::Vec2 BuildingAnchorPosition(const std::string& objectType, int tx, int ty) 
         (tx + footprintWidth * 0.5f) * static_cast<float>(kTileSize),
         (ty + footprintHeight) * static_cast<float>(kTileSize)
     };
+}
+
+bool FootprintInsideTerritory(const std::string& objectType, int tx, int ty) {
+    const rpg::SceneObjectDef* def = rpg::FindObjectDef(objectType);
+    if (!def) return false;
+    for (int y = ty; y < ty + def->footprintHeight; ++y) {
+        for (int x = tx; x < tx + def->footprintWidth; ++x) {
+            if (!rpg::TerritoryAt(g_game.scene, x, y)) return false;
+        }
+    }
+    return true;
 }
 
 bool PlacementActorCollision(const rpg::SceneObject& candidate, Vec2 actor, float radius) {
@@ -2945,6 +3241,11 @@ bool BuildingCanBePlaced(const std::string& objectType, int tx, int ty, std::wst
         if (reason) *reason = L"锚点需要完整的 7x7 空间";
         return false;
     }
+    if (objectType != "teleport_point" && objectType != "territory_anchor" &&
+        !FootprintInsideTerritory(objectType, tx, ty)) {
+        if (reason) *reason = L"建筑必须完整放置在领地范围内";
+        return false;
+    }
     if (objectType == "teleport_point" && rpg::TerritoryAt(g_game.scene, tx, ty) &&
         RealityLoad() + kTeleportRealityLoad > RealityCapacityLimit()) {
         if (reason) *reason = L"现实承载力不足，无法启用新的传送点";
@@ -2958,7 +3259,7 @@ bool BuildingCanBePlaced(const std::string& objectType, int tx, int ty, std::wst
         return false;
     }
     for (const rpg::SceneObject& object : g_game.scene.objects) {
-        if (PlacementObjectsOverlap(candidate, object)) {
+        if (BuildingFootprintsOverlap(candidate, object) || PlacementObjectsOverlap(candidate, object)) {
             if (reason) *reason = L"建筑与其他建筑碰撞";
             return false;
         }
@@ -2996,17 +3297,29 @@ bool PlaceBuildingAtPreview() {
         g_game.pickupNoticeTime = 1.5f;
         return false;
     }
-    const int sourceSlot = g_game.inventory.placementSourceSlot;
-    ItemStack* source = InventoryItemAt(sourceSlot);
-    if (!source || source->id.empty()) return false;
-    rpg::SceneObject object = rpg::MakeObject(
-        g_game.inventory.placementObjectType,
-        BuildingAnchorPosition(g_game.inventory.placementObjectType, tile.x, tile.y),
-        static_cast<int>(g_game.scene.objects.size()) + 10000);
-    object.id = g_game.inventory.placementObjectType + "_" + std::to_string(object.id.size() + g_game.scene.objects.size());
+    rpg::SceneObject object;
+    if (g_game.inventory.movingExistingBuilding) {
+        object = g_game.inventory.movingBuilding;
+        object.pos = BuildingAnchorPosition(g_game.inventory.placementObjectType, tile.x, tile.y);
+    } else if (g_game.inventory.placingCraftedBuilding) {
+        object = rpg::MakeObject(
+            g_game.inventory.placementObjectType,
+            BuildingAnchorPosition(g_game.inventory.placementObjectType, tile.x, tile.y),
+            static_cast<int>(g_game.scene.objects.size()) + 10000);
+        object.id = g_game.inventory.placementObjectType + "_crafted_" + std::to_string(g_game.scene.objects.size() + 1);
+    } else {
+        const int sourceSlot = g_game.inventory.placementSourceSlot;
+        ItemStack* source = InventoryItemAt(sourceSlot);
+        if (!source || source->id.empty()) return false;
+        object = rpg::MakeObject(
+            g_game.inventory.placementObjectType,
+            BuildingAnchorPosition(g_game.inventory.placementObjectType, tile.x, tile.y),
+            static_cast<int>(g_game.scene.objects.size()) + 10000);
+        object.id = g_game.inventory.placementObjectType + "_" + std::to_string(object.id.size() + g_game.scene.objects.size());
+        if (source->count > 1) --source->count;
+        else *source = {};
+    }
     g_game.scene.objects.push_back(std::move(object));
-    if (source->count > 1) --source->count;
-    else *source = {};
     const bool isAnchor = g_game.inventory.placementObjectType == "territory_anchor";
     if (isAnchor) {
         for (int y = tile.y - 3; y <= tile.y + 3; ++y)
@@ -3015,62 +3328,194 @@ bool PlaceBuildingAtPreview() {
     }
     g_game.inventory.placingBuilding = false;
     g_game.inventory.placingAnchor = false;
+    const bool movedBuilding = g_game.inventory.movingExistingBuilding;
+    const bool craftedBuilding = g_game.inventory.placingCraftedBuilding;
+    g_game.inventory.movingExistingBuilding = false;
+    g_game.inventory.movingBuilding = {};
+    g_game.inventory.placingCraftedBuilding = false;
+    g_game.inventory.reservedBuildingMaterials.clear();
     g_game.inventory.placementSourceSlot = -1;
-    g_game.pickupNotice = isAnchor ? L"现实锚点已建立，生成 7x7 领地" : L"建筑已放置";
+    g_game.inventory.placementObjectType.clear();
+    g_game.pickupNotice = isAnchor ? L"现实锚点已建立，生成 7x7 领地" :
+        (movedBuilding ? L"建筑已移动" : L"建筑已放置");
     g_game.pickupNoticeTime = 2.0f;
+    if (craftedBuilding) {
+        g_game.anchorPanelOpen = true;
+        g_game.anchorPanelTab = AnchorPanelTab::Crafting;
+        g_game.craftingCategory = CraftingCategory::Buildings;
+    }
     SaveCurrentScene();
     return true;
 }
 
 void CancelBuildingPlacement() {
     if (!g_game.inventory.placingBuilding) return;
+    if (g_game.inventory.movingExistingBuilding) {
+        g_game.scene.objects.push_back(std::move(g_game.inventory.movingBuilding));
+    }
+    const bool craftedBuilding = g_game.inventory.placingCraftedBuilding;
+    if (craftedBuilding) {
+        for (const ItemStack& reserved : g_game.inventory.reservedBuildingMaterials) {
+            ItemStack refund = reserved;
+            StoreItem(refund);
+            if (refund.count > 0) StoreAnchorItem(refund);
+            if (refund.count > 0) SpawnPickup(g_game.player.pos, refund.id, refund.count);
+        }
+    }
     g_game.inventory.placingBuilding = false;
     g_game.inventory.placingAnchor = false;
+    g_game.inventory.movingExistingBuilding = false;
+    g_game.inventory.movingBuilding = {};
+    g_game.inventory.placingCraftedBuilding = false;
+    g_game.inventory.reservedBuildingMaterials.clear();
     g_game.inventory.placementSourceSlot = -1;
     g_game.inventory.placementObjectType.clear();
-    g_game.pickupNotice = L"已取消放置，物品返回原格";
+    g_game.pickupNotice = craftedBuilding ? L"已取消建造，材料已退回" : L"已取消放置，物品返回原格";
     g_game.pickupNoticeTime = 1.5f;
+    if (craftedBuilding) {
+        g_game.anchorPanelOpen = true;
+        g_game.anchorPanelTab = AnchorPanelTab::Crafting;
+        g_game.craftingCategory = CraftingCategory::Buildings;
+        SaveCurrentGame();
+    }
 }
 
-bool ExpandTerritoryRect(POINT first, POINT second) {
+bool BeginMovingBuildingAt(POINT tile) {
+    for (int i = static_cast<int>(g_game.scene.objects.size()) - 1; i >= 0; --i) {
+        const rpg::SceneObject& object = g_game.scene.objects[i];
+        const rpg::SceneObjectDef* def = rpg::FindObjectDef(object.type);
+        if (!def || !def->building || object.type == "territory_anchor" || object.type == "farmland") continue;
+        const POINT origin = ObjectFootprintOrigin(object);
+        if (tile.x < origin.x || tile.y < origin.y ||
+            tile.x >= origin.x + def->footprintWidth || tile.y >= origin.y + def->footprintHeight) continue;
+
+        g_game.inventory.movingBuilding = object;
+        g_game.inventory.movingExistingBuilding = true;
+        g_game.inventory.placingBuilding = true;
+        g_game.inventory.placingAnchor = false;
+        g_game.inventory.placementSourceSlot = -1;
+        g_game.inventory.placementObjectType = object.type;
+        g_game.inventory.placementTile = origin;
+        g_game.inventory.placementValid = true;
+        g_game.scene.objects.erase(g_game.scene.objects.begin() + i);
+        g_game.pickupNotice = L"建筑已选中，移动鼠标后再次点击放下；空格取消";
+        g_game.pickupNoticeTime = 2.0f;
+        return true;
+    }
+    g_game.pickupNotice = L"这里没有可移动的建筑";
+    g_game.pickupNoticeTime = 1.4f;
+    return false;
+}
+
+bool TerritoryMaskConnected(const std::vector<std::uint8_t>& territory) {
+    const int width = g_game.scene.mapWidth;
+    const int height = g_game.scene.mapHeight;
+    int start = -1;
+    int claimedCount = 0;
+    for (int i = 0; i < static_cast<int>(territory.size()); ++i) {
+        if (!territory[i]) continue;
+        if (start < 0) start = i;
+        ++claimedCount;
+    }
+    if (start < 0) return false;
+
+    std::vector<std::uint8_t> visited(territory.size(), 0);
+    std::vector<int> pending{start};
+    visited[start] = 1;
+    int visitedCount = 0;
+    while (!pending.empty()) {
+        const int index = pending.back();
+        pending.pop_back();
+        ++visitedCount;
+        const int x = index % width;
+        const int y = index / width;
+        constexpr int dx[] = {-1, 1, 0, 0};
+        constexpr int dy[] = {0, 0, -1, 1};
+        for (int direction = 0; direction < 4; ++direction) {
+            const int nx = x + dx[direction];
+            const int ny = y + dy[direction];
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+            const int next = ny * width + nx;
+            if (!territory[next] || visited[next]) continue;
+            visited[next] = 1;
+            pending.push_back(next);
+        }
+    }
+    return visitedCount == claimedCount;
+}
+
+bool FootprintInsideTerritoryMask(
+    const rpg::SceneObject& object,
+    const std::vector<std::uint8_t>& territory) {
+    const rpg::SceneObjectDef* def = rpg::FindObjectDef(object.type);
+    if (!def) return true;
+    const POINT origin = ObjectFootprintOrigin(object);
+    for (int y = origin.y; y < origin.y + def->footprintHeight; ++y) {
+        for (int x = origin.x; x < origin.x + def->footprintWidth; ++x) {
+            if (x < 0 || y < 0 || x >= g_game.scene.mapWidth || y >= g_game.scene.mapHeight ||
+                !territory[y * g_game.scene.mapWidth + x]) return false;
+        }
+    }
+    return true;
+}
+
+bool ModifyTerritoryRect(POINT first, POINT second, bool claim) {
     const int left = std::clamp<int>(std::min(first.x, second.x), 0, g_game.scene.mapWidth - 1);
     const int right = std::clamp<int>(std::max(first.x, second.x), 0, g_game.scene.mapWidth - 1);
     const int top = std::clamp<int>(std::min(first.y, second.y), 0, g_game.scene.mapHeight - 1);
     const int bottom = std::clamp<int>(std::max(first.y, second.y), 0, g_game.scene.mapHeight - 1);
-    if (g_game.territoryStability < kMinimumRecruitmentStability) {
+    if (claim && g_game.territoryStability < kMinimumRecruitmentStability) {
         g_game.pickupNotice = L"领地稳定度低于 25，暂时无法扩张";
         g_game.pickupNoticeTime = 2.0f;
         return false;
     }
-    std::vector<std::uint8_t> expanded = g_game.scene.territory;
-    int added = 0;
-    bool progress = true;
-    while (progress) {
-        progress = false;
-        for (int y = top; y <= bottom; ++y) {
-            for (int x = left; x <= right; ++x) {
-                const int index = y * g_game.scene.mapWidth + x;
-                if (expanded[index]) continue;
-                const auto claimed = [&](int nx, int ny) {
-                    return nx >= 0 && ny >= 0 && nx < g_game.scene.mapWidth && ny < g_game.scene.mapHeight &&
-                           expanded[ny * g_game.scene.mapWidth + nx] != 0;
-                };
-                if (!claimed(x - 1, y) && !claimed(x + 1, y) && !claimed(x, y - 1) && !claimed(x, y + 1)) continue;
-                expanded[index] = 1;
-                ++added;
-                progress = true;
-            }
+    std::vector<std::uint8_t> changedTerritory = g_game.scene.territory;
+    int changed = 0;
+    for (int y = top; y <= bottom; ++y) {
+        for (int x = left; x <= right; ++x) {
+            std::uint8_t& tile = changedTerritory[y * g_game.scene.mapWidth + x];
+            const std::uint8_t value = claim ? 1 : 0;
+            if (tile == value) continue;
+            tile = value;
+            ++changed;
         }
     }
-    if (added == 0) {
-        g_game.pickupNotice = L"飞地无效：新区域必须连接现有领地";
+    if (changed == 0) {
+        g_game.pickupNotice = claim ? L"所选区域已经属于领地" : L"所选区域没有可删除的领地";
         g_game.pickupNoticeTime = 1.6f;
         return false;
     }
-    if (TerritoryTileCount() + added > TerritoryAreaLimit()) {
+    const int resultingCount = static_cast<int>(std::count(changedTerritory.begin(), changedTerritory.end(), 1));
+    if (claim && resultingCount > TerritoryAreaLimit()) {
         g_game.pickupNotice = L"领地面积已达上限（" + std::to_wstring(TerritoryAreaLimit()) + L" 格）";
         g_game.pickupNoticeTime = 2.0f;
         return false;
+    }
+    if (!TerritoryMaskConnected(changedTerritory)) {
+        g_game.pickupNotice = claim ? L"飞地无效：新增领地必须与现有领地连通" :
+                                      L"无法删除：操作会把领地分割成飞地";
+        g_game.pickupNoticeTime = 2.0f;
+        return false;
+    }
+    const auto anchor = std::find_if(g_game.scene.objects.begin(), g_game.scene.objects.end(), [](const rpg::SceneObject& object) {
+        return object.type == "territory_anchor";
+    });
+    if (anchor != g_game.scene.objects.end() && !FootprintInsideTerritoryMask(*anchor, changedTerritory)) {
+        g_game.pickupNotice = L"无法删除现实锚点所在的领地";
+        g_game.pickupNoticeTime = 2.0f;
+        return false;
+    }
+    if (!claim) {
+        for (const rpg::SceneObject& object : g_game.scene.objects) {
+            if (object.type == "teleport_point" || object.type == "territory_anchor") continue;
+            const rpg::SceneObjectDef* def = rpg::FindObjectDef(object.type);
+            if (!def || !def->building) continue;
+            if (!FootprintInsideTerritoryMask(object, changedTerritory)) {
+                g_game.pickupNotice = L"无法删除：普通建筑必须保留在领地范围内";
+                g_game.pickupNoticeTime = 2.0f;
+                return false;
+            }
+        }
     }
     int projectedLoad = (static_cast<int>(g_game.npcs.size()) + PendingResidentCount()) * kResidentRealityLoad +
                         (RealityAnchorExists() ? kWorkbenchRealityLoad : 0);
@@ -3078,20 +3523,138 @@ bool ExpandTerritoryRect(POINT first, POINT second) {
         if (object.type != "teleport_point") continue;
         const POINT tile = ObjectFootprintOrigin(object);
         if (tile.x >= 0 && tile.y >= 0 && tile.x < g_game.scene.mapWidth && tile.y < g_game.scene.mapHeight &&
-            expanded[tile.y * g_game.scene.mapWidth + tile.x]) projectedLoad += kTeleportRealityLoad;
+            changedTerritory[tile.y * g_game.scene.mapWidth + tile.x]) projectedLoad += kTeleportRealityLoad;
     }
-    if (projectedLoad > RealityCapacityLimit()) {
+    if (claim && projectedLoad > RealityCapacityLimit()) {
         g_game.pickupNotice = L"扩张会启用传送点并超过现实承载上限";
         g_game.pickupNoticeTime = 2.0f;
         return false;
     }
-    g_game.scene.territory = std::move(expanded);
-    const bool changed = true;
-    g_game.pickupNotice = L"领地已扩张 " + std::to_wstring(added) + L" 格";
+    g_game.scene.territory = std::move(changedTerritory);
+    g_game.pickupNotice = claim ? L"领地已扩张 " + std::to_wstring(changed) + L" 格" :
+                                  L"领地已收回 " + std::to_wstring(changed) + L" 格";
     g_game.pickupNoticeTime = 1.6f;
     rpg::InvalidateTerritoryRenderCache();
     SaveCurrentScene();
-    return changed;
+    return true;
+}
+
+bool ModifyFarmlandRect(POINT first, POINT second, bool create) {
+    const int left = std::clamp<int>(std::min(first.x, second.x), 0, g_game.scene.mapWidth - 1);
+    const int right = std::clamp<int>(std::max(first.x, second.x), 0, g_game.scene.mapWidth - 1);
+    const int top = std::clamp<int>(std::min(first.y, second.y), 0, g_game.scene.mapHeight - 1);
+    const int bottom = std::clamp<int>(std::max(first.y, second.y), 0, g_game.scene.mapHeight - 1);
+    int changed = 0;
+    if (!create) {
+        const auto newEnd = std::remove_if(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+            if (object.type != "farmland") return false;
+            const POINT origin = ObjectFootprintOrigin(object);
+            const bool remove = origin.x >= left && origin.x <= right && origin.y >= top && origin.y <= bottom;
+            if (remove) ++changed;
+            return remove;
+        });
+        g_game.scene.objects.erase(newEnd, g_game.scene.objects.end());
+    } else {
+        for (int y = top; y <= bottom; ++y) {
+            for (int x = left; x <= right; ++x) {
+                const bool exists = std::any_of(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+                    if (object.type != "farmland") return false;
+                    const POINT origin = ObjectFootprintOrigin(object);
+                    return origin.x == x && origin.y == y;
+                });
+                if (exists) continue;
+                std::wstring reason;
+                if (!BuildingCanBePlaced("farmland", x, y, &reason)) continue;
+                rpg::SceneObject farmland = rpg::MakeObject(
+                    "farmland", BuildingAnchorPosition("farmland", x, y),
+                    static_cast<int>(g_game.scene.objects.size()) + 20000 + changed);
+                int suffix = static_cast<int>(g_game.scene.objects.size()) + 1;
+                do {
+                    farmland.id = "farmland_runtime_" + std::to_string(suffix++);
+                } while (std::any_of(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+                    return object.id == farmland.id;
+                }));
+                g_game.scene.objects.push_back(std::move(farmland));
+                ++changed;
+            }
+        }
+    }
+    g_game.pickupNotice = changed > 0
+        ? (create ? L"已创建耕地 " : L"已删除耕地 ") + std::to_wstring(changed) + L" 格"
+        : (create ? L"所选区域没有可创建的耕地" : L"所选区域没有耕地");
+    g_game.pickupNoticeTime = 1.8f;
+    if (changed > 0) SaveCurrentScene();
+    return changed > 0;
+}
+
+bool InteractWithFarmland(int screenX, int screenY) {
+    const POINT tile = ScreenToTile(screenX, screenY);
+    const auto farmland = std::find_if(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+        if (object.type != "farmland") return false;
+        const POINT origin = ObjectFootprintOrigin(object);
+        return origin.x == tile.x && origin.y == tile.y;
+    });
+    if (farmland == g_game.scene.objects.end()) return false;
+    if (Distance(g_game.player.pos, {farmland->pos.x, farmland->pos.y}) > 190.0f) {
+        g_game.pickupNotice = L"距离耕地太远";
+        g_game.pickupNoticeTime = 1.4f;
+        return true;
+    }
+
+    if (!farmland->cropId.empty()) {
+        const int requiredDays = CropGrowthDays(farmland->cropId);
+        if (farmland->cropGrowthDays < requiredDays) {
+            g_game.pickupNotice = L"作物生长中：" + std::to_wstring(farmland->cropGrowthDays) + L" / " +
+                                  std::to_wstring(requiredDays) + L" 天";
+            g_game.pickupNoticeTime = 1.6f;
+            return true;
+        }
+        const std::string harvestedCrop = farmland->cropId;
+        const int harvestCount = CropHarvestCount(harvestedCrop);
+        ItemStack harvest = MakeItemStack(harvestedCrop, harvestCount);
+        const std::wstring cropName = harvest.displayName;
+        StoreItem(harvest);
+        if (harvest.count > 0) SpawnPickup({farmland->pos.x, farmland->pos.y - 18.0f}, harvestedCrop, harvest.count);
+        farmland->cropId.clear();
+        farmland->cropGrowthDays = 0;
+        g_game.pickupNotice = L"收获 " + cropName + L" x" + std::to_wstring(harvestCount);
+        g_game.pickupNoticeTime = 2.0f;
+        SaveCurrentScene();
+        return true;
+    }
+
+    ItemStack& selected = g_game.inventory.slots[g_game.inventory.selectedHotbar];
+    const std::string cropId = CropIdForSeed(selected.id);
+    if (cropId.empty()) {
+        g_game.pickupNotice = L"请在快捷栏选中一种种子";
+        g_game.pickupNoticeTime = 1.6f;
+        return true;
+    }
+    farmland->cropId = cropId;
+    farmland->cropGrowthDays = 0;
+    if (--selected.count <= 0) selected = {};
+    const rpg::ItemDef* crop = rpg::FindItemDef(cropId);
+    g_game.pickupNotice = L"已播种：" + (crop ? crop->displayName : L"作物");
+    g_game.pickupNoticeTime = 1.8f;
+    SaveCurrentScene();
+    return true;
+}
+
+void FinishBuildingToolSelection() {
+    if (!g_game.inventory.selectingTerritory) return;
+    const bool create = !g_game.inventory.selectionRemoving;
+    if (g_game.inventory.buildingToolMode == BuildingToolMode::Farmland) {
+        ModifyFarmlandRect(g_game.inventory.territoryStartTile, g_game.inventory.territoryEndTile, create);
+    } else if (g_game.inventory.buildingToolMode == BuildingToolMode::Territory) {
+        if (!HasTerritoryAnchor()) {
+            g_game.pickupNotice = L"请先从背包放置现实锚点";
+            g_game.pickupNoticeTime = 1.5f;
+        } else {
+            ModifyTerritoryRect(g_game.inventory.territoryStartTile, g_game.inventory.territoryEndTile, create);
+        }
+    }
+    g_game.inventory.selectingTerritory = false;
+    g_game.inventory.selectionRemoving = false;
 }
 
 void DrawTerritoryPreview(HDC hdc) {
@@ -3106,9 +3669,14 @@ void DrawTerritoryPreview(HDC hdc) {
         const int top = static_cast<int>(std::round(std::min(a.y, b.y) * kTileSize * scale - g_game.camera.y));
         const int right = static_cast<int>(std::round((std::max(a.x, b.x) + 1) * kTileSize * scale - g_game.camera.x));
         const int bottom = static_cast<int>(std::round((std::max(a.y, b.y) + 1) * kTileSize * scale - g_game.camera.y));
+        HPEN operationPen = CreatePen(PS_DOT, 2, g_game.inventory.selectionRemoving
+            ? RGB(240, 102, 102) : RGB(112, 232, 139));
+        SelectObject(hdc, operationPen);
         HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
         Rectangle(hdc, left, top, right, bottom);
         SelectObject(hdc, oldBrush);
+        SelectObject(hdc, previewPen);
+        DeleteObject(operationPen);
     }
     SelectObject(hdc, oldPen);
     DeleteObject(previewPen);
@@ -3185,6 +3753,75 @@ InventoryLayout MakeInventoryLayout(const RECT& client) {
         layout.hotbarY = layout.gridY + gridHeight + 38;
     }
     return layout;
+}
+
+RECT BuildingToolButtonRect(const InventoryLayout& layout, int index) {
+    constexpr int buttonWidth = 84;
+    constexpr int buttonHeight = 32;
+    constexpr int gap = 6;
+    constexpr int buttonCount = 3;
+    const int totalWidth = buttonCount * buttonWidth + (buttonCount - 1) * gap;
+    const int left = layout.gridX + (InventoryRowWidth() - totalWidth) / 2 + index * (buttonWidth + gap);
+    const int top = layout.hotbarY - buttonHeight - 10;
+    return RECT{left, top, left + buttonWidth, top + buttonHeight};
+}
+
+void DrawBuildingToolBar(HDC hdc, const InventoryLayout& layout) {
+    if (!HeldSpiritSkill(1)) return;
+    constexpr const wchar_t* labels[] = {L"移动", L"耕地", L"领地"};
+    const int selected = static_cast<int>(g_game.inventory.buildingToolMode);
+    for (int i = 0; i < 3; ++i) {
+        const RECT button = BuildingToolButtonRect(layout, i);
+        FillRectColor(hdc, button, i == selected ? RGB(133, 104, 49) : RGB(50, 58, 55));
+        HPEN pen = CreatePen(PS_SOLID, i == selected ? 2 : 1,
+                             i == selected ? RGB(244, 216, 124) : RGB(128, 138, 131));
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(hdc, button.left, button.top, button.right, button.bottom);
+        SelectObject(hdc, oldBrush);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+        DrawCenteredText(hdc, labels[i], button, i == selected ? RGB(255, 247, 210) : RGB(220, 225, 215), 15);
+    }
+}
+
+void DrawFarmCrops(HDC hdc) {
+    const float scale = RenderScale();
+    for (const rpg::SceneObject& farmland : g_game.scene.objects) {
+        if (farmland.type != "farmland" || farmland.cropId.empty()) continue;
+        const int requiredDays = CropGrowthDays(farmland.cropId);
+        const bool mature = farmland.cropGrowthDays >= requiredDays;
+        const float progress = Clamp(static_cast<float>(farmland.cropGrowthDays + 1) /
+                                     static_cast<float>(requiredDays + 1), 0.25f, 1.0f);
+        const int imageSize = std::max(12, static_cast<int>(std::round((mature ? 38.0f : 30.0f) * progress * scale)));
+        const int centerX = static_cast<int>(std::round(farmland.pos.x * scale - g_game.camera.x));
+        const int centerY = static_cast<int>(std::round((farmland.pos.y - 24.0f) * scale - g_game.camera.y));
+        RECT image{centerX - imageSize / 2, centerY - imageSize / 2,
+                   centerX - imageSize / 2 + imageSize, centerY - imageSize / 2 + imageSize};
+        ItemStack visual = MakeItemStack(mature ? farmland.cropId : SeedIdForCrop(farmland.cropId), 1);
+        if (!visual.id.empty() && DrawItemImage(hdc, visual, image, true)) continue;
+
+        const COLORREF fill = mature ? RGB(113, 176, 77) : RGB(100, 139, 72);
+        HBRUSH brush = CreateSolidBrush(fill);
+        HPEN pen = CreatePen(PS_SOLID, 1, RGB(48, 83, 44));
+        HGDIOBJ oldBrush = SelectObject(hdc, brush);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        Ellipse(hdc, image.left, image.top, image.right, image.bottom);
+        SelectObject(hdc, oldPen);
+        SelectObject(hdc, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+}
+
+int HitBuildingToolButton(const RECT& client, int x, int y) {
+    if (!HeldSpiritSkill(1)) return -1;
+    const InventoryLayout layout = MakeInventoryLayout(client);
+    for (int i = 0; i < 3; ++i) {
+        const RECT button = BuildingToolButtonRect(layout, i);
+        if (PtInRect(&button, POINT{x, y})) return i;
+    }
+    return -1;
 }
 
 void DrawInventorySlot(
@@ -3324,6 +3961,7 @@ void SelectSpiritStone(int index) {
     }
     g_game.pickupNoticeTime = 1.5f;
     if (!HeldSpiritSkill(1)) {
+        if (g_game.inventory.placingBuilding) CancelBuildingPlacement();
         g_game.inventory.placingAnchor = false;
         g_game.inventory.selectingTerritory = false;
     }
@@ -3413,6 +4051,7 @@ void DrawInventory(HDC hdc, const RECT& client) {
     }
     DrawHeldSkillSlot(hdc, layout);
     DrawSpiritMenu(hdc, layout);
+    DrawBuildingToolBar(hdc, layout);
 }
 
 int HitInventorySlot(const RECT& client, int x, int y) {
@@ -3573,15 +4212,20 @@ RECT AnchorTabRect(const RECT& panel, AnchorPanelTab tab) {
     } else if (tab == AnchorPanelTab::Workbench) {
         if (!storageAvailable) return {};
         visibleIndex = 1;
+    } else if (tab == AnchorPanelTab::Crafting) {
+        if (!storageAvailable) return {};
+        visibleIndex = 2;
     } else if (tab == AnchorPanelTab::Residents) {
-        visibleIndex = storageAvailable ? 2 : 0;
+        visibleIndex = storageAvailable ? 3 : 0;
     } else if (tab == AnchorPanelTab::Work) {
-        visibleIndex = storageAvailable ? 3 : 1;
+        visibleIndex = storageAvailable ? 4 : 1;
     } else {
-        visibleIndex = storageAvailable ? 4 : 2;
+        visibleIndex = storageAvailable ? 5 : 2;
     }
-    constexpr int width = 126;
     constexpr int gap = 5;
+    const int visibleCount = storageAvailable ? 6 : 3;
+    const int availableWidth = std::max(300, static_cast<int>(panel.right - panel.left) - 186);
+    const int width = std::max(82, (availableWidth - (visibleCount - 1) * gap) / visibleCount);
     const int left = panel.left + 166 + visibleIndex * (width + gap);
     return {left, panel.top + 12, left + width, panel.top + 46};
 }
@@ -3590,7 +4234,8 @@ int HitAnchorTab(const RECT& client, int x, int y) {
     if (!g_game.anchorPanelOpen) return -1;
     const RECT panel = AnchorPanelRect(client);
     for (const AnchorPanelTab tab : {AnchorPanelTab::Storage, AnchorPanelTab::Workbench,
-                                     AnchorPanelTab::Residents, AnchorPanelTab::Work, AnchorPanelTab::Technology}) {
+                                     AnchorPanelTab::Crafting, AnchorPanelTab::Residents,
+                                     AnchorPanelTab::Work, AnchorPanelTab::Technology}) {
         const RECT rect = AnchorTabRect(panel, tab);
         if (rect.right > rect.left && PtInRect(&rect, POINT{x, y})) return static_cast<int>(tab);
     }
@@ -3663,9 +4308,12 @@ struct WorkbenchRecipeDef {
     const char* requiredBlueprint;
     std::array<Ingredient, 4> ingredients;
     int ingredientCount;
+    CraftingStation station = CraftingStation::Workbench;
+    int outputCount = 1;
+    const char* requiredFacilityType = nullptr;
 };
 
-constexpr std::array<WorkbenchRecipeDef, 12> kWorkbenchRecipes{{
+constexpr std::array<WorkbenchRecipeDef, 33> kWorkbenchRecipes{{
     {"gathering_stone", L"采集石I", nullptr, {{{"emerald", L"绿宝石", 1}, {"stone", L"石头", 1}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}}}, 3},
     {"gathering_stone_ii", L"采集石II", nullptr, {{{"emerald", L"绿宝石", 1}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {nullptr, nullptr, 0}}}, 3},
     {"gathering_stone_iii", L"采集石III", nullptr, {{{"emerald", L"绿宝石", 2}, {"exotic_ore", L"特异矿石", 1}, {"exotic_wood", L"特异木头", 1}, {"anchor_fragment", L"锚点碎片", 1}}}, 4},
@@ -3678,11 +4326,83 @@ constexpr std::array<WorkbenchRecipeDef, 12> kWorkbenchRecipes{{
     {"small_potion", L"治疗药水", nullptr, {{{"healing_herb", L"草药", 1}, {"fodder", L"草料", 1}, {"berry", L"浆果", 1}, {nullptr, nullptr, 0}}}, 3},
     {"cottage_4x3", L"4x3 小屋", "cottage_4x3", {{{"wood", L"木头", 30}, {"iron_ore", L"铁矿石", 8}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
     {"teleport_point", L"传送点", "teleport_point", {{{"iron_ore", L"铁矿石", 12}, {"gold_coin", L"金币", 20}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"rice_seed", L"水稻分解为种子", nullptr, {{{"rice", L"水稻", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Decompose, 4},
+    {"corn_seed", L"玉米分解为种子", nullptr, {{{"corn", L"玉米", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Decompose, 4},
+    {"potato_seed", L"土豆分解为种子", nullptr, {{{"potato", L"土豆", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Decompose, 4},
+    {"sweet_potato_seed", L"红薯分解为种子", nullptr, {{{"sweet_potato", L"红薯", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Decompose, 4},
+    {"cabbage_seed", L"白菜分解为种子", nullptr, {{{"cabbage", L"白菜", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Decompose, 4},
+    {"iron_ingot", L"铁锭", nullptr, {{{"iron_ore", L"铁矿石", 2}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2, CraftingStation::Production, 1, "furnace"},
+    {"copper_ingot", L"铜锭", nullptr, {{{"copper_ore", L"铜矿石", 2}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2, CraftingStation::Production, 1, "furnace"},
+    {"silver_ingot", L"银锭", nullptr, {{{"silver_ore", L"银矿石", 2}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2, CraftingStation::Production, 1, "furnace"},
+    {"gold_ingot", L"金锭", nullptr, {{{"gold_ore", L"金矿石", 2}, {"wood", L"木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2, CraftingStation::Production, 1, "furnace"},
+    {"plank", L"木板", nullptr, {{{"wood", L"木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Production, 2, "sawmill"},
+    {"exotic_plank", L"特异木板", nullptr, {{{"exotic_wood", L"特异木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1, CraftingStation::Production, 2, "sawmill"},
+    {"flower_bed", L"花坛", nullptr, {{{"fodder", L"草料", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1},
+    {"pond", L"水池", nullptr, {{{"stone", L"石头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1},
+    {"stone_floor", L"石头地板", nullptr, {{{"stone", L"石头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1},
+    {"wood_floor", L"木头地板", nullptr, {{{"wood", L"木头", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 1},
+    {"warehouse", L"仓库", nullptr, {{{"wood", L"木头", 2}, {"stone", L"石头", 2}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"campfire", L"篝火", nullptr, {{{"wood", L"木头", 2}, {"fodder", L"草料", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"apothecary", L"药房", nullptr, {{{"wood", L"木头", 2}, {"stone", L"石头", 2}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"kitchen", L"厨房", nullptr, {{{"wood", L"木头", 2}, {"stone", L"石头", 2}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"furnace", L"熔炉", nullptr, {{{"wood", L"木头", 2}, {"stone", L"石头", 4}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
+    {"sawmill", L"锯木台", nullptr, {{{"wood", L"木头", 1}, {"iron_ingot", L"铁锭", 1}, {nullptr, nullptr, 0}, {nullptr, nullptr, 0}}}, 2},
 }};
 
 RECT WorkbenchRecipeRect(const RECT& panel, int index) {
-    const int top = panel.top + 96 + index * 31;
+    const int top = panel.top + 130 + index * 31;
     return {panel.left + 28, top, panel.left + 304, top + 27};
+}
+
+RECT CraftingStationButtonRect(const RECT& panel, int index) {
+    const int left = panel.left + 28 + index * 132;
+    return {left, panel.top + 64, left + 124, panel.top + 94};
+}
+
+bool CraftingStationAvailable(CraftingStation station) {
+    if (station != CraftingStation::Production) return true;
+    return std::any_of(g_game.scene.objects.begin(), g_game.scene.objects.end(), [](const rpg::SceneObject& object) {
+        return (object.type == "furnace" || object.type == "sawmill") && ObjectInsideTerritory(object);
+    });
+}
+
+bool RecipeIsBuilding(const WorkbenchRecipeDef& recipe) {
+    const rpg::SceneObjectDef* object = rpg::FindObjectDef(recipe.outputId);
+    return object && object->building && object->placeable;
+}
+
+bool RecipeFacilityAvailable(const WorkbenchRecipeDef& recipe) {
+    if (!recipe.requiredFacilityType) return true;
+    return std::any_of(g_game.scene.objects.begin(), g_game.scene.objects.end(), [&](const rpg::SceneObject& object) {
+        return object.type == recipe.requiredFacilityType && ObjectInsideTerritory(object);
+    });
+}
+
+bool RecipeVisibleInCurrentPanel(const WorkbenchRecipeDef& recipe) {
+    if (g_game.anchorPanelTab == AnchorPanelTab::Workbench) {
+        return recipe.station == g_game.craftingStation && recipe.station != CraftingStation::Workbench;
+    }
+    if (g_game.anchorPanelTab == AnchorPanelTab::Crafting) {
+        if (recipe.station != CraftingStation::Workbench) return false;
+        return RecipeIsBuilding(recipe) == (g_game.craftingCategory == CraftingCategory::Buildings);
+    }
+    return false;
+}
+
+int FirstRecipeForStation(CraftingStation station) {
+    for (int i = 0; i < static_cast<int>(kWorkbenchRecipes.size()); ++i) {
+        if (kWorkbenchRecipes[i].station == station) return i;
+    }
+    return 0;
+}
+
+int FirstRecipeForCraftingCategory(CraftingCategory category) {
+    for (int i = 0; i < static_cast<int>(kWorkbenchRecipes.size()); ++i) {
+        const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[i];
+        if (recipe.station == CraftingStation::Workbench &&
+            RecipeIsBuilding(recipe) == (category == CraftingCategory::Buildings)) return i;
+    }
+    return 0;
 }
 
 RECT WorkbenchCraftButtonRect(const RECT& panel) {
@@ -3696,11 +4416,14 @@ int StoredItemCount(std::string_view id) {
     return count;
 }
 
-bool CanStoreWorkbenchOutput(std::string_view id) {
+bool CanStoreWorkbenchOutput(std::string_view id, int count = 1) {
     const rpg::ItemDef* def = rpg::FindItemDef(id);
     if (!def) return false;
+    int capacity = 0;
     for (const ItemStack& item : g_game.inventory.slots) {
-        if (item.id.empty() || (item.id == id && item.count < def->maxStack)) return true;
+        if (item.id.empty()) capacity += def->maxStack;
+        else if (item.id == id && item.count < def->maxStack) capacity += def->maxStack - item.count;
+        if (capacity >= count) return true;
     }
     return false;
 }
@@ -3721,15 +4444,41 @@ void ConsumeStoredItem(std::string_view id, int count) {
 }
 
 bool WorkbenchRecipeCraftable(const WorkbenchRecipeDef& recipe) {
+    if (!RecipeFacilityAvailable(recipe)) return false;
     if (recipe.requiredBlueprint && !BlueprintUnlocked(recipe.requiredBlueprint)) return false;
     for (int i = 0; i < recipe.ingredientCount; ++i) {
         if (StoredItemCount(recipe.ingredients[i].id) < recipe.ingredients[i].count) return false;
     }
-    return CanStoreWorkbenchOutput(recipe.outputId);
+    return RecipeIsBuilding(recipe) || CanStoreWorkbenchOutput(recipe.outputId, recipe.outputCount);
+}
+
+int HitCraftingStation(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Workbench ||
+        !AnchorStorageAvailable()) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    for (int i = 0; i < 2; ++i) {
+        const RECT button = CraftingStationButtonRect(panel, i);
+        if (PtInRect(&button, POINT{x, y})) {
+            return static_cast<int>(i == 0 ? CraftingStation::Decompose : CraftingStation::Production);
+        }
+    }
+    return -1;
+}
+
+int HitCraftingCategory(const RECT& client, int x, int y) {
+    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Crafting ||
+        !AnchorStorageAvailable()) return -1;
+    const RECT panel = AnchorPanelRect(client);
+    for (int i = 0; i < 2; ++i) {
+        const RECT button = CraftingStationButtonRect(panel, i);
+        if (PtInRect(&button, POINT{x, y})) return i;
+    }
+    return -1;
 }
 
 int HitWorkbenchRecipe(const RECT& client, int x, int y) {
-    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Workbench ||
+    if (!g_game.anchorPanelOpen ||
+        (g_game.anchorPanelTab != AnchorPanelTab::Workbench && g_game.anchorPanelTab != AnchorPanelTab::Crafting) ||
         !AnchorStorageAvailable()) return -1;
     const RECT panel = AnchorPanelRect(client);
     const RECT button = WorkbenchCraftButtonRect(panel);
@@ -3737,11 +4486,14 @@ int HitWorkbenchRecipe(const RECT& client, int x, int y) {
 }
 
 int HitWorkbenchRecipeRow(const RECT& client, int x, int y) {
-    if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Workbench ||
+    if (!g_game.anchorPanelOpen ||
+        (g_game.anchorPanelTab != AnchorPanelTab::Workbench && g_game.anchorPanelTab != AnchorPanelTab::Crafting) ||
         !AnchorStorageAvailable()) return -1;
     const RECT panel = AnchorPanelRect(client);
+    int visible = 0;
     for (int i = 0; i < static_cast<int>(kWorkbenchRecipes.size()); ++i) {
-        const RECT row = WorkbenchRecipeRect(panel, i);
+        if (!RecipeVisibleInCurrentPanel(kWorkbenchRecipes[i])) continue;
+        const RECT row = WorkbenchRecipeRect(panel, visible++);
         if (PtInRect(&row, POINT{x, y})) return i;
     }
     return -1;
@@ -3809,7 +4561,7 @@ int HitAnchorNpcStone(const RECT& client, int x, int y) {
     const RECT panel = AnchorPanelRect(client);
     for (int i = 0; i < kSpiritSlotCount; ++i) {
         const RECT button = g_game.anchorPanelTab == AnchorPanelTab::Work
-            ? RECT{panel.left + 342 + i * 156, panel.top + 340, panel.left + 342 + i * 156 + 144, panel.top + 374}
+            ? RECT{panel.left + 342 + i * 156, panel.top + 382, panel.left + 342 + i * 156 + 144, panel.top + 416}
             : AnchorStoneButtonRect(panel, i);
         if (PtInRect(&button, POINT{x, y})) return i;
     }
@@ -3823,11 +4575,15 @@ struct NpcFacilityJob {
 
 std::vector<NpcFacilityJob> AvailableNpcFacilityJobs() {
     std::vector<NpcFacilityJob> jobs;
+    const rpg::SceneObject* firstFarmland = nullptr;
     for (const rpg::SceneObject& object : g_game.scene.objects) {
         if (!ObjectInsideTerritory(object)) continue;
-        if (object.type == "territory_anchor") jobs.push_back({object.id, L"锚点工作台助手"});
-        else if (object.type.find("furnace") != std::string::npos) jobs.push_back({object.id, L"熔炉工"});
-        else if (object.type.find("farm") != std::string::npos) jobs.push_back({object.id, L"农田管理员"});
+        if (object.type == "farmland" && !firstFarmland) firstFarmland = &object;
+    }
+    if (firstFarmland) jobs.push_back({firstFarmland->id, L"农田管理员"});
+    for (const rpg::SceneObject& object : g_game.scene.objects) {
+        if (object.type == "furnace" && ObjectInsideTerritory(object)) jobs.push_back({object.id, L"熔炉工"});
+        else if (object.type == "sawmill" && ObjectInsideTerritory(object)) jobs.push_back({object.id, L"锯木工"});
     }
     return jobs;
 }
@@ -3839,19 +4595,19 @@ RECT NpcWorkFacilityRect(const RECT& panel, int index) {
 
 RECT NpcGatherTargetRect(const RECT& panel, int index) {
     const int left = panel.left + 342 + index * 108;
-    return {left, panel.top + 222, left + 100, panel.top + 254};
+    return {left, panel.top + 264, left + 100, panel.top + 296};
 }
 
 RECT NpcStartGatheringRect(const RECT& panel) {
-    return {panel.left + 342, panel.top + 270, panel.left + 492, panel.top + 306};
+    return {panel.left + 342, panel.top + 312, panel.left + 492, panel.top + 348};
 }
 
 RECT NpcReturnHomeRect(const RECT& panel) {
-    return {panel.left + 504, panel.top + 270, panel.left + 654, panel.top + 306};
+    return {panel.left + 504, panel.top + 312, panel.left + 654, panel.top + 348};
 }
 
 RECT NpcStopWorkRect(const RECT& panel) {
-    return {panel.left + 666, panel.top + 270, panel.left + 816, panel.top + 306};
+    return {panel.left + 666, panel.top + 312, panel.left + 816, panel.top + 348};
 }
 
 RECT NpcWorkCargoRect(const RECT& panel, int index) {
@@ -3860,7 +4616,7 @@ RECT NpcWorkCargoRect(const RECT& panel, int index) {
     const int column = index % 5;
     const int row = index / 5;
     const int left = panel.left + 556 + column * (cell + gap);
-    const int top = panel.top + 408 + row * (cell + gap);
+    const int top = panel.top + 450 + row * (cell + gap);
     return {left, top, left + cell, top + cell};
 }
 
@@ -3868,7 +4624,7 @@ int HitNpcWorkFacility(const RECT& client, int x, int y) {
     if (!g_game.anchorPanelOpen || g_game.anchorPanelTab != AnchorPanelTab::Work) return -1;
     const RECT panel = AnchorPanelRect(client);
     const auto jobs = AvailableNpcFacilityJobs();
-    for (int i = 0; i < static_cast<int>(jobs.size()); ++i) {
+    for (int i = 0; i < static_cast<int>(jobs.size()) && i < 3; ++i) {
         const RECT row = NpcWorkFacilityRect(panel, i);
         if (PtInRect(&row, POINT{x, y})) return i;
     }
@@ -3972,7 +4728,8 @@ void DrawCenteredText(HDC hdc, const std::wstring& text, const RECT& rect, COLOR
 void DrawAnchorPanel(HDC hdc, const RECT& client) {
     if (!g_game.anchorPanelOpen) return;
     if (!AnchorStorageAvailable() &&
-        (g_game.anchorPanelTab == AnchorPanelTab::Storage || g_game.anchorPanelTab == AnchorPanelTab::Workbench)) {
+        (g_game.anchorPanelTab == AnchorPanelTab::Storage || g_game.anchorPanelTab == AnchorPanelTab::Workbench ||
+         g_game.anchorPanelTab == AnchorPanelTab::Crafting)) {
         g_game.anchorPanelTab = AnchorPanelTab::Residents;
     }
     const RECT panel = AnchorPanelRect(client);
@@ -3989,6 +4746,7 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
     const struct { AnchorPanelTab tab; const wchar_t* label; } tabs[] = {
         {AnchorPanelTab::Storage, L"锚点仓库"},
         {AnchorPanelTab::Workbench, L"工作台"},
+        {AnchorPanelTab::Crafting, L"制作"},
         {AnchorPanelTab::Residents, L"NPC 列表"},
         {AnchorPanelTab::Work, L"工作和采集"},
         {AnchorPanelTab::Technology, L"科技树"},
@@ -4013,13 +4771,26 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
         return;
     }
 
-    if (g_game.anchorPanelTab == AnchorPanelTab::Workbench) {
-        DrawTextLine(hdc, L"工作台", panel.left + 28, panel.top + 68, RGB(230, 239, 216));
-        DrawTextLine(hdc, L"制作会优先消耗背包材料，再消耗锚点仓库材料",
-                     panel.left + 126, panel.top + 68, RGB(151, 176, 162));
+    if (g_game.anchorPanelTab == AnchorPanelTab::Workbench || g_game.anchorPanelTab == AnchorPanelTab::Crafting) {
+        constexpr const wchar_t* workbenchLabels[] = {L"种子分解", L"生产"};
+        constexpr const wchar_t* craftingLabels[] = {L"物品", L"建筑"};
+        for (int option = 0; option < 2; ++option) {
+            const RECT optionButton = CraftingStationButtonRect(panel, option);
+            const bool selectedOption = g_game.anchorPanelTab == AnchorPanelTab::Workbench
+                ? g_game.craftingStation == (option == 0 ? CraftingStation::Decompose : CraftingStation::Production)
+                : g_game.craftingCategory == static_cast<CraftingCategory>(option);
+            FillRectColor(hdc, optionButton, selectedOption ? RGB(70, 112, 86) : RGB(46, 56, 52));
+            DrawCenteredText(hdc,
+                             g_game.anchorPanelTab == AnchorPanelTab::Workbench ? workbenchLabels[option] : craftingLabels[option],
+                             optionButton, selectedOption ? RGB(232, 244, 224) : RGB(205, 216, 204), 14);
+        }
+        DrawTextLine(hdc, L"优先消耗背包材料，再消耗锚点仓库材料",
+                     panel.left + 326, panel.top + 70, RGB(151, 176, 162));
+        int visibleRecipe = 0;
         for (int i = 0; i < static_cast<int>(kWorkbenchRecipes.size()); ++i) {
             const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[i];
-            const RECT row = WorkbenchRecipeRect(panel, i);
+            if (!RecipeVisibleInCurrentPanel(recipe)) continue;
+            const RECT row = WorkbenchRecipeRect(panel, visibleRecipe++);
             const bool unlocked = !recipe.requiredBlueprint || BlueprintUnlocked(recipe.requiredBlueprint);
             FillRectColor(hdc, row, i == g_game.anchorSelectedWorkbenchRecipe ? RGB(68, 105, 86) : RGB(43, 52, 49));
             DrawTextLine(hdc, recipe.name, row.left + 9, row.top + 5,
@@ -4031,10 +4802,14 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
                                         static_cast<int>(kWorkbenchRecipes.size()) - 1);
         const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[selected];
         const bool unlocked = !recipe.requiredBlueprint || BlueprintUnlocked(recipe.requiredBlueprint);
+        const bool stationAvailable = RecipeFacilityAvailable(recipe);
         const bool craftable = WorkbenchRecipeCraftable(recipe);
         const int detailX = panel.left + 360;
         DrawTextLine(hdc, recipe.name, detailX, panel.top + 112,
                      unlocked ? RGB(236, 241, 222) : RGB(151, 159, 153));
+        ItemStack previewItem = MakeItemStack(recipe.outputId, recipe.outputCount);
+        RECT previewRect{panel.right - 132, panel.top + 104, panel.right - 44, panel.top + 192};
+        if (!previewItem.id.empty()) DrawItemImage(hdc, previewItem, previewRect, false);
         if (unlocked) {
             DrawTextLine(hdc, L"所需材料", detailX, panel.top + 154, RGB(170, 202, 181));
             for (int i = 0; i < recipe.ingredientCount; ++i) {
@@ -4044,13 +4819,25 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
                              std::to_wstring(ingredient.count), detailX, panel.top + 190 + i * 34,
                              owned >= ingredient.count ? RGB(169, 220, 178) : RGB(220, 147, 133));
             }
-            DrawTextLine(hdc, L"成品进入主角背包", detailX, panel.bottom - 108, RGB(149, 166, 156));
+            const std::wstring outputText = RecipeIsBuilding(recipe)
+                ? L"确认后进入建筑放置模式"
+                : L"产出 " + std::to_wstring(recipe.outputCount) + L" 个，成品进入主角背包";
+            DrawTextLine(hdc, outputText,
+                         detailX, panel.bottom - 108, RGB(149, 166, 156));
         } else {
             DrawTextLine(hdc, L"需要先在科技树解锁该建筑蓝图", detailX, panel.top + 160, RGB(174, 148, 137));
         }
         const RECT button = WorkbenchCraftButtonRect(panel);
         FillRectColor(hdc, button, craftable ? RGB(70, 121, 85) : RGB(53, 60, 57));
-        DrawCenteredText(hdc, unlocked ? (craftable ? L"制作" : L"材料不足或背包已满") : L"尚未解锁", button,
+        std::wstring craftLabel;
+        if (!stationAvailable) {
+            craftLabel = recipe.requiredFacilityType && std::string_view(recipe.requiredFacilityType) == "sawmill"
+                ? L"领地内需要锯木台" : L"领地内需要熔炉";
+        } else {
+            craftLabel = !unlocked ? L"尚未解锁" :
+                (craftable ? (RecipeIsBuilding(recipe) ? L"建造" : L"制作") : L"材料不足或背包已满");
+        }
+        DrawCenteredText(hdc, craftLabel, button,
                          craftable ? RGB(231, 246, 224) : RGB(154, 163, 157), 16);
         return;
     }
@@ -4078,7 +4865,7 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
         if (jobs.empty()) {
             DrawTextLine(hdc, L"当前领地没有可用生产设施", panel.left + 342, panel.top + 142, RGB(169, 151, 141));
         } else {
-            for (int i = 0; i < static_cast<int>(jobs.size()) && i < 2; ++i) {
+            for (int i = 0; i < static_cast<int>(jobs.size()) && i < 3; ++i) {
                 const RECT row = NpcWorkFacilityRect(panel, i);
                 const bool selected = npc.taskMode == NpcTaskMode::Facility && npc.facilityId == jobs[i].objectId;
                 const auto occupant = std::find_if(g_game.npcs.begin(), g_game.npcs.end(), [&](const Npc& resident) {
@@ -4093,7 +4880,7 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
             }
         }
 
-        DrawTextLine(hdc, L"外出采集", panel.left + 342, panel.top + 196, RGB(160, 193, 174));
+        DrawTextLine(hdc, L"外出采集", panel.left + 342, panel.top + 238, RGB(160, 193, 174));
         constexpr const char* targetIds[] = {"any", "wood", "exotic_wood", "stone"};
         constexpr const wchar_t* targetNames[] = {L"自由采集", L"木头", L"特异木头", L"石头"};
         for (int i = 0; i < 4; ++i) {
@@ -4113,18 +4900,18 @@ void DrawAnchorPanel(HDC hdc, const RECT& client) {
         DrawCenteredText(hdc, L"立即回家", home, RGB(226, 235, 224), 15);
         DrawCenteredText(hdc, L"停止任务", stop, RGB(239, 221, 218), 15);
 
-        DrawTextLine(hdc, L"灵石", panel.left + 342, panel.top + 318, RGB(160, 193, 174));
+        DrawTextLine(hdc, L"灵石", panel.left + 342, panel.top + 360, RGB(160, 193, 174));
         constexpr const wchar_t* stoneLabels[] = {L"采集石", L"建筑石", L"战斗石"};
         for (int i = 0; i < kSpiritSlotCount; ++i) {
-            const RECT button{panel.left + 342 + i * 156, panel.top + 340,
-                              panel.left + 342 + i * 156 + 144, panel.top + 374};
+            const RECT button{panel.left + 342 + i * 156, panel.top + 382,
+                              panel.left + 342 + i * 156 + 144, panel.top + 416};
             FillRectColor(hdc, button, npc.spiritStones[i] ? RGB(62, 116, 81) : RGB(50, 59, 56));
             DrawCenteredText(hdc, npc.spiritStones[i] ? std::wstring(stoneLabels[i]) + L"  已装备" : stoneLabels[i], button,
                              npc.spiritStones[i] ? RGB(213, 244, 218) : RGB(222, 226, 210), 15);
         }
 
         DrawTextLine(hdc, L"随身背包  " + std::to_wstring(NpcCargoUsedSlots(npc)) + L" / 10",
-                     panel.left + 342, panel.top + 384, RGB(160, 193, 174));
+                     panel.left + 342, panel.top + 426, RGB(160, 193, 174));
         for (int i = 0; i < static_cast<int>(npc.cargo.size()); ++i) {
             ItemStack item;
             if (!npc.cargo[i].id.empty()) item = MakeItemStack(npc.cargo[i].id, npc.cargo[i].count);
@@ -4463,6 +5250,8 @@ void RenderGame(HWND hwnd, HDC target) {
         }
     }
 
+    DrawFarmCrops(hdc);
+
     DrawWorldPickups(hdc);
 
     for (const Monster& monster : g_game.monsters) {
@@ -4624,10 +5413,17 @@ void ToggleAnchorPanel() {
 }
 
 void SelectAnchorPanelTab(AnchorPanelTab tab) {
-    if ((tab == AnchorPanelTab::Storage || tab == AnchorPanelTab::Workbench) && !AnchorStorageAvailable()) return;
+    if ((tab == AnchorPanelTab::Storage || tab == AnchorPanelTab::Workbench || tab == AnchorPanelTab::Crafting) &&
+        !AnchorStorageAvailable()) return;
     g_game.anchorPanelTab = tab;
     g_game.inventory.dragging = false;
     g_game.inventory.dragSource = -1;
+    if (tab == AnchorPanelTab::Workbench) {
+        if (g_game.craftingStation == CraftingStation::Workbench) g_game.craftingStation = CraftingStation::Decompose;
+        g_game.anchorSelectedWorkbenchRecipe = FirstRecipeForStation(g_game.craftingStation);
+    } else if (tab == AnchorPanelTab::Crafting) {
+        g_game.anchorSelectedWorkbenchRecipe = FirstRecipeForCraftingCategory(g_game.craftingCategory);
+    }
     if ((tab == AnchorPanelTab::Residents || tab == AnchorPanelTab::Work) &&
         g_game.anchorSelectedNpc < 0 && !g_game.npcs.empty()) {
         g_game.anchorSelectedNpc = 0;
@@ -4709,10 +5505,35 @@ void ExecuteNpcWorkAction(NpcWorkAction action) {
     SaveCurrentGame();
 }
 
+void StartCraftedBuildingPlacement(const WorkbenchRecipeDef& recipe) {
+    g_game.inventory.reservedBuildingMaterials.clear();
+    for (int i = 0; i < recipe.ingredientCount; ++i) {
+        const auto& ingredient = recipe.ingredients[i];
+        ConsumeStoredItem(ingredient.id, ingredient.count);
+        g_game.inventory.reservedBuildingMaterials.push_back(MakeItemStack(ingredient.id, ingredient.count));
+    }
+    g_game.inventory.placingBuilding = true;
+    g_game.inventory.placingAnchor = false;
+    g_game.inventory.movingExistingBuilding = false;
+    g_game.inventory.placingCraftedBuilding = true;
+    g_game.inventory.placementSourceSlot = -1;
+    g_game.inventory.placementObjectType = recipe.outputId;
+    g_game.anchorPanelOpen = false;
+    g_game.inventory.open = false;
+    const POINT mouse = g_game.inventory.mousePoint;
+    UpdateBuildingPlacementPreview(mouse.x, mouse.y);
+    g_game.pickupNotice = std::wstring(L"放置 ") + recipe.name + L"：左键确认，右键取消并退回材料";
+    g_game.pickupNoticeTime = 3.0f;
+    SaveCurrentGame();
+}
+
 void CraftWorkbenchRecipe(int index) {
     if (!AnchorStorageAvailable() || index < 0 || index >= static_cast<int>(kWorkbenchRecipes.size())) return;
     const WorkbenchRecipeDef& recipe = kWorkbenchRecipes[index];
-    if (recipe.requiredBlueprint && !BlueprintUnlocked(recipe.requiredBlueprint)) {
+    if (!RecipeFacilityAvailable(recipe)) {
+        g_game.pickupNotice = recipe.requiredFacilityType && std::string_view(recipe.requiredFacilityType) == "sawmill"
+            ? L"领地内需要先放置锯木台" : L"领地内需要先放置熔炉";
+    } else if (recipe.requiredBlueprint && !BlueprintUnlocked(recipe.requiredBlueprint)) {
         g_game.pickupNotice = L"需要先在科技树解锁该蓝图";
     } else {
         for (int i = 0; i < recipe.ingredientCount; ++i) {
@@ -4722,12 +5543,16 @@ void CraftWorkbenchRecipe(int index) {
                 return;
             }
         }
-        if (!CanStoreWorkbenchOutput(recipe.outputId)) {
+        if (RecipeIsBuilding(recipe)) {
+            StartCraftedBuildingPlacement(recipe);
+            return;
+        }
+        if (!CanStoreWorkbenchOutput(recipe.outputId, recipe.outputCount)) {
             g_game.pickupNotice = L"主角背包已满";
             g_game.pickupNoticeTime = 2.0f;
             return;
         }
-        ItemStack output = MakeItemStack(recipe.outputId, 1);
+        ItemStack output = MakeItemStack(recipe.outputId, recipe.outputCount);
         if (output.id.empty()) {
             g_game.pickupNotice = L"物品定义缺失";
         } else {
@@ -5098,11 +5923,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_game.deathPhase != DeathPhase::None) return 0;
         if (g_console.open) return 0;
         if (g_game.mapOpen) return 0;
-        if (g_game.inventory.placingBuilding) {
-            PlaceBuildingAtPreview();
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
         SetKey(wParam, false);
         return 0;
     case WM_LBUTTONDOWN: {
@@ -5121,6 +5941,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (g_console.open || g_game.mapOpen) return 0;
+        if (const int tool = HitBuildingToolButton(client, x, y); tool >= 0) {
+            if (g_game.inventory.placingBuilding) CancelBuildingPlacement();
+            g_game.inventory.selectingTerritory = false;
+            g_game.inventory.selectionRemoving = false;
+            g_game.inventory.buildingToolMode = static_cast<BuildingToolMode>(tool);
+            constexpr const wchar_t* labels[] = {L"移动建筑", L"创建或删除耕地", L"扩张或收回领地"};
+            g_game.pickupNotice = labels[tool];
+            g_game.pickupNoticeTime = 1.5f;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (g_game.inventory.placingBuilding) {
+            UpdateBuildingPlacementPreview(x, y);
+            PlaceBuildingAtPreview();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (g_game.inventory.open) {
             if (const int spirit = HitSpiritMenu(client, x, y); spirit >= 0) {
                 constexpr const wchar_t* labels[] = {L"采集", L"建造", L"战斗"};
@@ -5163,6 +6000,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (g_game.anchorPanelOpen) {
+            if (const int station = HitCraftingStation(client, x, y); station >= 0) {
+                g_game.craftingStation = static_cast<CraftingStation>(station);
+                g_game.anchorSelectedWorkbenchRecipe = FirstRecipeForStation(g_game.craftingStation);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (const int category = HitCraftingCategory(client, x, y); category >= 0) {
+                g_game.craftingCategory = static_cast<CraftingCategory>(category);
+                g_game.anchorSelectedWorkbenchRecipe = FirstRecipeForCraftingCategory(g_game.craftingCategory);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (const int recipeRow = HitWorkbenchRecipeRow(client, x, y); recipeRow >= 0) {
                 g_game.anchorSelectedWorkbenchRecipe = recipeRow;
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -5352,14 +6201,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (HeldSpiritSkill(1)) {
             const POINT tile = ScreenToTile(x, y);
-            if (g_game.inventory.placingAnchor) {
-                PlaceBuildingAtPreview();
-            } else if (HasTerritoryAnchor()) {
-                ExpandTerritoryRect(tile, tile);
+            if (g_game.inventory.buildingToolMode == BuildingToolMode::Move) {
+                if (BeginMovingBuildingAt(tile)) UpdateBuildingPlacementPreview(x, y);
             } else {
-                g_game.pickupNotice = L"请先从背包放置现实锚点";
-                g_game.pickupNoticeTime = 1.5f;
+                g_game.inventory.selectingTerritory = true;
+                g_game.inventory.selectionRemoving = false;
+                g_game.inventory.territoryStartTile = tile;
+                g_game.inventory.territoryEndTile = tile;
+                SetCapture(hwnd);
             }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (InteractWithFarmland(x, y)) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -5398,7 +6252,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (g_game.inventory.placingBuilding) {
             UpdateBuildingPlacementPreview(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         }
-        if (g_game.inventory.selectingTerritory && (wParam & MK_RBUTTON)) {
+        if (g_game.inventory.selectingTerritory &&
+            ((wParam & MK_RBUTTON) || (wParam & MK_LBUTTON))) {
             g_game.inventory.territoryEndTile = ScreenToTile(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         }
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -5430,7 +6285,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_RBUTTONDOWN:
         if (g_console.open || g_game.mapOpen || g_game.anchorPanelOpen) return 0;
-        if (g_game.inventory.placingBuilding) return 0;
+        if (g_game.inventory.placingBuilding) {
+            CancelBuildingPlacement();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (g_screen == AppScreen::Playing && !g_game.inventory.open && HeldSpiritSkill(1) &&
+            g_game.inventory.buildingToolMode != BuildingToolMode::Move) {
+            g_game.inventory.selectingTerritory = true;
+            g_game.inventory.selectionRemoving = true;
+            g_game.inventory.territoryStartTile = ScreenToTile(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            g_game.inventory.territoryEndTile = g_game.inventory.territoryStartTile;
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (g_screen == AppScreen::Playing && !g_game.inventory.open) {
             const int npcIndex = HitNpc(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             if (npcIndex >= 0) {
@@ -5446,27 +6315,29 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             g_game.npcContextIndex = -1;
         }
-        if (g_screen == AppScreen::Playing && !g_game.inventory.open &&
-            HeldSpiritSkill(1) && HasTerritoryAnchor()) {
-            g_game.inventory.selectingTerritory = true;
-            g_game.inventory.territoryStartTile = ScreenToTile(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            g_game.inventory.territoryEndTile = g_game.inventory.territoryStartTile;
-            SetCapture(hwnd);
-            InvalidateRect(hwnd, nullptr, FALSE);
-        }
         return 0;
     case WM_RBUTTONUP:
-        if (g_game.inventory.selectingTerritory) {
+        if (g_game.inventory.selectingTerritory && g_game.inventory.selectionRemoving) {
             g_game.inventory.territoryEndTile = ScreenToTile(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            ExpandTerritoryRect(g_game.inventory.territoryStartTile, g_game.inventory.territoryEndTile);
-            g_game.inventory.selectingTerritory = false;
+            FinishBuildingToolSelection();
             ReleaseCapture();
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
     case WM_LBUTTONUP:
+        if (g_game.inventory.selectingTerritory && !g_game.inventory.selectionRemoving) {
+            g_game.inventory.territoryEndTile = ScreenToTile(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            FinishBuildingToolSelection();
+            ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         return 0;
     case WM_CAPTURECHANGED:
+        if (g_game.inventory.selectingTerritory) {
+            g_game.inventory.selectingTerritory = false;
+            g_game.inventory.selectionRemoving = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         if (g_game.inventory.dragging) {
             g_game.inventory.dragging = false;
             g_game.inventory.dragSource = -1;

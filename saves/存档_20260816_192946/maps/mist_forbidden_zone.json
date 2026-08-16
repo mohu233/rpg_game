@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "width": 275,
   "height": 275,
   "terrain": {
@@ -841,16 +841,16 @@
     {
       "id": "portal_up",
       "type": "teleport_point",
-      "x": 216.0,
-      "y": 240.0,
+      "x": 10920.0,
+      "y": 13152.0,
       "target_scene": "veil_lands.json",
       "target_id": "portal_down"
     },
     {
       "id": "portal_down",
       "type": "teleport_point",
-      "x": 12984.0,
-      "y": 13008.0,
+      "x": 72.0,
+      "y": 480.0,
       "target_scene": "shadow_nest.json",
       "target_id": "portal_up"
     },
@@ -1249,12 +1249,6 @@
       "type": "tree_oak",
       "x": 12865.9,
       "y": 442.0
-    },
-    {
-      "id": "generated_69",
-      "type": "bush",
-      "x": 181.1,
-      "y": 646.8
     },
     {
       "id": "generated_70",
@@ -11839,12 +11833,6 @@
       "type": "stone_round",
       "x": 10684.1,
       "y": 12939.6
-    },
-    {
-      "id": "generated_1834",
-      "type": "tree_oak",
-      "x": 10990.0,
-      "y": 12956.6
     },
     {
       "id": "generated_1835",

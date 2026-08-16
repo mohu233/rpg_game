@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "width": 200,
   "height": 200,
   "terrain": {
@@ -616,16 +616,16 @@
     {
       "id": "portal_up",
       "type": "teleport_point",
-      "x": 216.0,
-      "y": 240.0,
+      "x": 72.0,
+      "y": 1776.0,
       "target_scene": "mist_forbidden_zone.json",
       "target_id": "portal_down"
     },
     {
       "id": "portal_down",
       "type": "teleport_point",
-      "x": 9384.0,
-      "y": 9408.0,
+      "x": 9528.0,
+      "y": 4080.0,
       "target_scene": "ancient_altar.json",
       "target_id": "portal_up"
     },
@@ -1542,20 +1542,6 @@
       "y": 1439.6
     },
     {
-      "id": "generated_144",
-      "group": "generated_143",
-      "type": "exotic_tree_01_shadow",
-      "x": 1343.2,
-      "y": 1437.2
-    },
-    {
-      "id": "generated_143",
-      "group": "generated_143",
-      "type": "exotic_tree_01",
-      "x": 1343.2,
-      "y": 1437.2
-    },
-    {
       "id": "generated_146",
       "group": "generated_145",
       "type": "exotic_tree_01_shadow",
@@ -1786,20 +1772,6 @@
       "y": 1626.2
     },
     {
-      "id": "generated_181",
-      "group": "generated_180",
-      "type": "exotic_tree_01_shadow",
-      "x": 1608.2,
-      "y": 1672.6
-    },
-    {
-      "id": "generated_180",
-      "group": "generated_180",
-      "type": "exotic_tree_01",
-      "x": 1608.2,
-      "y": 1672.6
-    },
-    {
       "id": "generated_183",
       "group": "generated_182",
       "type": "exotic_tree_01_shadow",
@@ -1972,12 +1944,6 @@
       "type": "bush",
       "x": 1648.7,
       "y": 1841.3
-    },
-    {
-      "id": "generated_208",
-      "type": "stone_round",
-      "x": 1883.5,
-      "y": 1914.5
     },
     {
       "id": "generated_210",
@@ -2412,20 +2378,6 @@
       "type": "exotic_tree_01",
       "x": 1886.3,
       "y": 2338.7
-    },
-    {
-      "id": "generated_276",
-      "group": "generated_275",
-      "type": "exotic_tree_01_shadow",
-      "x": 2076.0,
-      "y": 2389.0
-    },
-    {
-      "id": "generated_275",
-      "group": "generated_275",
-      "type": "exotic_tree_01",
-      "x": 2076.0,
-      "y": 2389.0
     },
     {
       "id": "generated_277",

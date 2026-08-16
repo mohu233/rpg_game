@@ -3,9 +3,12 @@
 #include "world_layers.h"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
+#include <limits>
 #include <regex>
 #include <sstream>
+#include <string_view>
 
 #ifndef RPG_ASSET_DIR
 #define RPG_ASSET_DIR L"assets"
@@ -75,6 +78,81 @@ std::vector<std::uint8_t> DecodeExploredBits(const std::string& encoded, int til
         tiles[i] = (nibble & (1 << (3 - i % 4))) != 0 ? 1 : 0;
     }
     return tiles;
+}
+
+size_t JsonValueStart(std::string_view text, std::string_view key) {
+    const std::string quotedKey = "\"" + std::string(key) + "\"";
+    size_t position = text.find(quotedKey);
+    if (position == std::string_view::npos) return position;
+    position = text.find(':', position + quotedKey.size());
+    if (position == std::string_view::npos) return position;
+    ++position;
+    while (position < text.size() && std::isspace(static_cast<unsigned char>(text[position]))) ++position;
+    return position;
+}
+
+bool ReadJsonString(std::string_view text, std::string_view key, std::string& value) {
+    size_t position = JsonValueStart(text, key);
+    if (position == std::string_view::npos || position >= text.size() || text[position] != '"') return false;
+    const size_t start = ++position;
+    while (position < text.size()) {
+        if (text[position] == '"') {
+            value.assign(text.substr(start, position - start));
+            return true;
+        }
+        if (text[position] == '\\') {
+            // Save files currently use unescaped map names and hexadecimal bit strings.
+            return false;
+        }
+        ++position;
+    }
+    return false;
+}
+
+bool ReadJsonNonNegativeInt(std::string_view text, std::string_view key, int& value) {
+    size_t position = JsonValueStart(text, key);
+    if (position == std::string_view::npos || position >= text.size() || !std::isdigit(static_cast<unsigned char>(text[position]))) {
+        return false;
+    }
+    int parsed = 0;
+    while (position < text.size() && std::isdigit(static_cast<unsigned char>(text[position]))) {
+        const int digit = text[position++] - '0';
+        if (parsed > (std::numeric_limits<int>::max() - digit) / 10) return false;
+        parsed = parsed * 10 + digit;
+    }
+    value = parsed;
+    return true;
+}
+
+std::vector<SaveGameInfo::ExploredMapEntry> DecodeExploredMaps(const std::string& text) {
+    std::vector<SaveGameInfo::ExploredMapEntry> maps;
+    size_t cursor = JsonValueStart(text, "explored_maps");
+    if (cursor == std::string::npos || cursor >= text.size() || text[cursor] != '[') return maps;
+    ++cursor;
+    while (cursor < text.size()) {
+        const size_t objectStart = text.find('{', cursor);
+        const size_t arrayEnd = text.find(']', cursor);
+        if (arrayEnd == std::string::npos || objectStart == std::string::npos || objectStart > arrayEnd) break;
+        const size_t objectEnd = text.find('}', objectStart + 1);
+        if (objectEnd == std::string::npos || objectEnd > arrayEnd) break;
+
+        const std::string_view object(text.data() + objectStart, objectEnd - objectStart + 1);
+        std::string mapName;
+        std::string bits;
+        int tileCount = 0;
+        if (ReadJsonString(object, "map", mapName) &&
+            ReadJsonNonNegativeInt(object, "tile_count", tileCount) &&
+            ReadJsonString(object, "bits", bits)) {
+            tileCount = std::clamp(tileCount, 0, kMaximumMapDimension * kMaximumMapDimension);
+            SaveGameInfo::ExploredMapEntry explored;
+            explored.mapName = std::filesystem::u8path(mapName).wstring();
+            explored.tileCount = tileCount;
+            explored.tiles = DecodeExploredBits(bits, tileCount);
+            maps.push_back(std::move(explored));
+        }
+        cursor = objectEnd + 1;
+    }
+    return maps;
 }
 
 std::string EncodeResidentCargo(const std::vector<SaveGameInfo::InventoryEntry>& cargo) {
@@ -323,19 +401,7 @@ bool LoadSaveGame(const std::filesystem::path& directory, SaveGameInfo& info, st
     if (std::find(info.unlockedBlueprints.begin(), info.unlockedBlueprints.end(), "territory_anchor") == info.unlockedBlueprints.end()) {
         info.unlockedBlueprints.push_back("territory_anchor");
     }
-    info.exploredMaps.clear();
-    const std::regex exploredPattern(
-        "\\{\\s*\\\"map\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"tile_count\\\"\\s*:\\s*([0-9]+)\\s*,\\s*"
-        "\\\"bits\\\"\\s*:\\s*\\\"([0-9a-fA-F]*)\\\"\\s*\\}");
-    for (std::sregex_iterator it(text.begin(), text.end(), exploredPattern), end; it != end; ++it) {
-        const int tileCount = std::clamp(std::stoi((*it)[2].str()), 0,
-                                         kMaximumMapDimension * kMaximumMapDimension);
-        SaveGameInfo::ExploredMapEntry explored;
-        explored.mapName = std::filesystem::u8path((*it)[1].str()).wstring();
-        explored.tileCount = tileCount;
-        explored.tiles = DecodeExploredBits((*it)[3].str(), tileCount);
-        info.exploredMaps.push_back(std::move(explored));
-    }
+    info.exploredMaps = DecodeExploredMaps(text);
     info.inventory.clear();
     const std::regex entryPattern(
         "\\{\\s*\\\"slot\\\"\\s*:\\s*([0-9]+)\\s*,\\s*\\\"item\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"\\s*,\\s*\\\"count\\\"\\s*:\\s*([0-9]+)\\s*\\}");

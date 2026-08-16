@@ -1,0 +1,21 @@
+{
+  "type": "pond",
+  "display_name": "水池",
+  "image": "pond.png",
+  "width": 48.0,
+  "height": 48.0,
+  "z_offset": -1.0,
+  "building": true,
+  "footprint_width": 1,
+  "footprint_height": 1,
+  "draggable": false,
+  "placeable": true,
+  "collision": {
+    "shape": "none",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 0.0,
+    "h": 0.0,
+    "blocks": false
+  }
+}

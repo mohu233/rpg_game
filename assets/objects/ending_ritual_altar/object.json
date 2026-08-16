@@ -1,0 +1,21 @@
+{
+  "type": "ending_ritual_altar",
+  "display_name": "结尾仪式祭坛",
+  "image": "ending_ritual_altar.png",
+  "width": 288.0,
+  "height": 240.0,
+  "z_offset": 0.0,
+  "building": true,
+  "footprint_width": 5,
+  "footprint_height": 4,
+  "draggable": false,
+  "placeable": false,
+  "collision": {
+    "shape": "rect",
+    "x": -120.0,
+    "y": -192.0,
+    "w": 240.0,
+    "h": 192.0,
+    "blocks": true
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "apothecary",
+  "display_name": "药房",
+  "max_stack": 10,
+  "color": "#668f82",
+  "icon": "items/apothecary/icon.png",
+  "world_image": "items/apothecary/world.png",
+  "source": "建造石建造",
+  "category": "building",
+  "properties": {
+    "building": 1,
+    "potion_station": 1
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "wood",
+        "count": 2
+      },
+      {
+        "item": "stone",
+        "count": 2
+      }
+    ]
+  }
+}

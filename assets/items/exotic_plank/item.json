@@ -1,0 +1,23 @@
+{
+  "id": "exotic_plank",
+  "display_name": "特异木板",
+  "max_stack": 99,
+  "color": "#4f8f83",
+  "icon": "items/exotic_plank/icon.png",
+  "world_image": "items/exotic_plank/world.png",
+  "source": "锯木台生产",
+  "category": "plank",
+  "properties": {
+    "material_grade": 2
+  },
+  "recipe": {
+    "station": "sawmill",
+    "ingredients": [
+      {
+        "item": "exotic_wood",
+        "count": 1
+      }
+    ],
+    "output_count": 2
+  }
+}

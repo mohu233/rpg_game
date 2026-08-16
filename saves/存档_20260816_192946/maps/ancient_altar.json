@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "width": 140,
   "height": 140,
   "terrain": {
@@ -436,8 +436,8 @@
     {
       "id": "portal_up",
       "type": "teleport_point",
-      "x": 216.0,
-      "y": 240.0,
+      "x": 6648.0,
+      "y": 1728.0,
       "target_scene": "shadow_nest.json",
       "target_id": "portal_down"
     },
@@ -1232,12 +1232,6 @@
       "y": 1630.6
     },
     {
-      "id": "generated_126",
-      "type": "bush",
-      "x": 6424.0,
-      "y": 1589.4
-    },
-    {
       "id": "generated_127",
       "type": "bush",
       "x": 181.8,
@@ -1974,12 +1968,6 @@
       "y": 3342.6
     },
     {
-      "id": "generated_242",
-      "type": "bush",
-      "x": 3066.4,
-      "y": 3305.2
-    },
-    {
       "id": "generated_244",
       "group": "generated_243",
       "type": "exotic_tree_01_shadow",
@@ -2100,12 +2088,6 @@
       "type": "exotic_tree_01",
       "x": 2770.2,
       "y": 3532.7
-    },
-    {
-      "id": "generated_262",
-      "type": "stone_round",
-      "x": 3083.0,
-      "y": 3540.0
     },
     {
       "id": "generated_264",
@@ -3636,6 +3618,12 @@
       "type": "stone_round",
       "x": 6192.9,
       "y": 6440.3
+    },
+    {
+      "id": "ending_ritual_altar",
+      "type": "ending_ritual_altar",
+      "x": 3384.0,
+      "y": 3456.0
     }
   ]
 }

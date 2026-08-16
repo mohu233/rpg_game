@@ -1,0 +1,21 @@
+{
+  "type": "furnace",
+  "display_name": "熔炉",
+  "image": "furnace.png",
+  "width": 96.0,
+  "height": 136.0,
+  "z_offset": 0.0,
+  "building": true,
+  "footprint_width": 2,
+  "footprint_height": 2,
+  "draggable": false,
+  "placeable": true,
+  "collision": {
+    "shape": "rect",
+    "x": -48.0,
+    "y": -96.0,
+    "w": 96.0,
+    "h": 96.0,
+    "blocks": true
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "pond",
+  "display_name": "水池",
+  "max_stack": 20,
+  "color": "#5f9eb3",
+  "icon": "items/pond/icon.png",
+  "world_image": "items/pond/world.png",
+  "source": "建造石建造",
+  "category": "building",
+  "properties": {
+    "building": 1,
+    "ground_overlay": 1,
+    "comfort": 2
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "stone",
+        "count": 1
+      }
+    ]
+  }
+}

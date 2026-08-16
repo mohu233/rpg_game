@@ -93,6 +93,8 @@ struct SceneObject {
     CollisionBody collision;
     std::string targetScene;
     std::string targetId;
+    std::string cropId;
+    int cropGrowthDays = 0;
 };
 
 struct Scene {

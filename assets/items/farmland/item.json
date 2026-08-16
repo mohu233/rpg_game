@@ -1,0 +1,15 @@
+{
+  "id": "farmland",
+  "display_name": "耕地",
+  "max_stack": 20,
+  "color": "#806342",
+  "icon": "items/farmland/icon.png",
+  "world_image": "items/farmland/world.png",
+  "source": "建造石建造",
+  "category": "building",
+  "properties": {
+    "building": 1,
+    "ground_overlay": 1,
+    "planting": 1
+  }
+}

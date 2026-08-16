@@ -213,6 +213,28 @@
       "recipe": null
     },
     {
+      "id": "rice_seed",
+      "display_name": "水稻种子",
+      "category": "seed",
+      "max_stack": 99,
+      "source": "水稻分解或击杀怪物获得",
+      "properties": {
+        "seed": 1,
+        "crop_days": 2,
+        "harvest_count": 2
+      },
+      "recipe": {
+        "station": "decompose",
+        "ingredients": [
+          {
+            "item": "rice",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
+    },
+    {
       "id": "corn",
       "display_name": "玉米",
       "category": "crop",
@@ -222,6 +244,28 @@
         "food": 1
       },
       "recipe": null
+    },
+    {
+      "id": "corn_seed",
+      "display_name": "玉米种子",
+      "category": "seed",
+      "max_stack": 99,
+      "source": "玉米分解或击杀怪物获得",
+      "properties": {
+        "seed": 1,
+        "crop_days": 2,
+        "harvest_count": 2
+      },
+      "recipe": {
+        "station": "decompose",
+        "ingredients": [
+          {
+            "item": "corn",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
     },
     {
       "id": "potato",
@@ -235,6 +279,28 @@
       "recipe": null
     },
     {
+      "id": "potato_seed",
+      "display_name": "土豆种子",
+      "category": "seed",
+      "max_stack": 99,
+      "source": "土豆分解或击杀怪物获得",
+      "properties": {
+        "seed": 1,
+        "crop_days": 2,
+        "harvest_count": 2
+      },
+      "recipe": {
+        "station": "decompose",
+        "ingredients": [
+          {
+            "item": "potato",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
+    },
+    {
       "id": "sweet_potato",
       "display_name": "红薯",
       "category": "crop",
@@ -246,6 +312,28 @@
       "recipe": null
     },
     {
+      "id": "sweet_potato_seed",
+      "display_name": "红薯种子",
+      "category": "seed",
+      "max_stack": 99,
+      "source": "红薯分解或击杀怪物获得",
+      "properties": {
+        "seed": 1,
+        "crop_days": 2,
+        "harvest_count": 2
+      },
+      "recipe": {
+        "station": "decompose",
+        "ingredients": [
+          {
+            "item": "sweet_potato",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
+    },
+    {
       "id": "cabbage",
       "display_name": "白菜",
       "category": "crop",
@@ -255,6 +343,28 @@
         "food": 1
       },
       "recipe": null
+    },
+    {
+      "id": "cabbage_seed",
+      "display_name": "白菜种子",
+      "category": "seed",
+      "max_stack": 99,
+      "source": "白菜分解或击杀怪物获得",
+      "properties": {
+        "seed": 1,
+        "crop_days": 2,
+        "harvest_count": 2
+      },
+      "recipe": {
+        "station": "decompose",
+        "ingredients": [
+          {
+            "item": "cabbage",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
     },
     {
       "id": "iron_ingot",
@@ -346,6 +456,46 @@
             "count": 1
           }
         ]
+      }
+    },
+    {
+      "id": "plank",
+      "display_name": "木板",
+      "category": "plank",
+      "max_stack": 99,
+      "source": "锯木台生产",
+      "properties": {
+        "material_grade": 1
+      },
+      "recipe": {
+        "station": "sawmill",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ],
+        "output_count": 2
+      }
+    },
+    {
+      "id": "exotic_plank",
+      "display_name": "特异木板",
+      "category": "plank",
+      "max_stack": 99,
+      "source": "锯木台生产",
+      "properties": {
+        "material_grade": 2
+      },
+      "recipe": {
+        "station": "sawmill",
+        "ingredients": [
+          {
+            "item": "exotic_wood",
+            "count": 1
+          }
+        ],
+        "output_count": 2
       }
     },
     {
@@ -650,6 +800,297 @@
           }
         ]
       }
+    },
+    {
+      "id": "farmland",
+      "display_name": "耕地",
+      "category": "building",
+      "max_stack": 20,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "ground_overlay": 1,
+        "planting": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "flower_bed",
+      "display_name": "花坛",
+      "category": "building",
+      "max_stack": 20,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "ground_overlay": 1,
+        "comfort": 2
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "fodder",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pond",
+      "display_name": "水池",
+      "category": "building",
+      "max_stack": 20,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "ground_overlay": 1,
+        "comfort": 2
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "stone",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "stone_floor",
+      "display_name": "石头地板",
+      "category": "building",
+      "max_stack": 99,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "ground_overlay": 1,
+        "comfort": 0.5
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "stone",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
+    },
+    {
+      "id": "wood_floor",
+      "display_name": "木头地板",
+      "category": "building",
+      "max_stack": 99,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "ground_overlay": 1,
+        "comfort": 0.5
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 1
+          }
+        ],
+        "output_count": 4
+      }
+    },
+    {
+      "id": "warehouse",
+      "display_name": "仓库",
+      "category": "building",
+      "max_stack": 5,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "storage_slots": 500
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 2
+          },
+          {
+            "item": "stone",
+            "count": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "campfire",
+      "display_name": "篝火",
+      "category": "building",
+      "max_stack": 10,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "cooking_tier": 1,
+        "comfort": 2
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 2
+          },
+          {
+            "item": "fodder",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "apothecary",
+      "display_name": "药房",
+      "category": "building",
+      "max_stack": 10,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "potion_station": 1
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 2
+          },
+          {
+            "item": "stone",
+            "count": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "kitchen",
+      "display_name": "厨房",
+      "category": "building",
+      "max_stack": 5,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "cooking_tier": 2
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 2
+          },
+          {
+            "item": "stone",
+            "count": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "furnace",
+      "display_name": "熔炉",
+      "category": "building",
+      "max_stack": 5,
+      "source": "建造石建造",
+      "properties": {
+        "building": 1,
+        "furnace": 1
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 2
+          },
+          {
+            "item": "stone",
+            "count": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": "sawmill",
+      "display_name": "锯木台",
+      "category": "building",
+      "max_stack": 1,
+      "source": "制作面板建造",
+      "properties": {
+        "building": 1,
+        "sawmill": 1
+      },
+      "recipe": {
+        "station": "workbench",
+        "ingredients": [
+          {
+            "item": "wood",
+            "count": 1
+          },
+          {
+            "item": "iron_ingot",
+            "count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "gold_coin",
+      "display_name": "金币",
+      "category": "currency",
+      "max_stack": 999,
+      "source": "已有游戏资源",
+      "properties": {
+        "currency": 1,
+        "value": 1,
+        "weight": 0.01
+      },
+      "recipe": null
+    },
+    {
+      "id": "territory_anchor",
+      "display_name": "现实锚点",
+      "category": "building",
+      "max_stack": 1,
+      "source": "已有游戏资源",
+      "properties": {
+        "building": 1,
+        "territory_radius": 3
+      },
+      "recipe": null
+    },
+    {
+      "id": "cottage_4x3",
+      "display_name": "4x3 小屋",
+      "category": "building",
+      "max_stack": 1,
+      "source": "已有游戏资源",
+      "properties": {
+        "building": 1
+      },
+      "recipe": null
+    },
+    {
+      "id": "teleport_point",
+      "display_name": "传送点",
+      "category": "building",
+      "max_stack": 1,
+      "source": "已有游戏资源",
+      "properties": {
+        "building": 1
+      },
+      "recipe": null
     }
   ]
 }

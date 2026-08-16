@@ -9,19 +9,23 @@ int main() {
         std::cerr << "failed to load item definitions: " << error << '\n';
         return 1;
     }
-    if (rpg::ItemDefs().size() != 41) {
-        std::cerr << "expected 41 item definitions\n";
+    if (rpg::ItemDefs().size() != 59) {
+        std::cerr << "expected 59 item definitions\n";
         return 1;
     }
 
     constexpr const char* gameplayItems[] = {
         "wood", "exotic_wood", "stone", "iron_ore", "copper_ore", "silver_ore", "gold_ore",
         "ruby", "emerald", "sapphire", "topaz", "amethyst", "anchor_fragment", "exotic_ore",
-        "healing_herb", "berry", "wheat", "fodder", "rice", "corn", "potato", "sweet_potato", "cabbage",
-        "iron_ingot", "copper_ingot", "silver_ingot", "gold_ingot",
+        "healing_herb", "berry", "wheat", "fodder",
+        "rice", "rice_seed", "corn", "corn_seed", "potato", "potato_seed",
+        "sweet_potato", "sweet_potato_seed", "cabbage", "cabbage_seed",
+        "iron_ingot", "copper_ingot", "silver_ingot", "gold_ingot", "plank", "exotic_plank",
         "gathering_stone", "gathering_stone_ii", "gathering_stone_iii",
         "combat_stone", "combat_stone_ii", "combat_stone_iii",
         "building_stone", "building_stone_ii", "building_stone_iii", "small_potion",
+        "farmland", "flower_bed", "pond", "stone_floor", "wood_floor",
+        "warehouse", "campfire", "apothecary", "kitchen", "furnace", "sawmill",
     };
     for (const char* id : gameplayItems) {
         const rpg::ItemDef* item = rpg::FindItemDef(id);
@@ -40,6 +44,11 @@ int main() {
     const rpg::ItemDef* territoryAnchor = rpg::FindItemDef("territory_anchor");
     const rpg::ItemDef* cottage = rpg::FindItemDef("cottage_4x3");
     const rpg::ItemDef* teleportPoint = rpg::FindItemDef("teleport_point");
+    const rpg::ItemDef* riceSeed = rpg::FindItemDef("rice_seed");
+    const rpg::ItemDef* farmland = rpg::FindItemDef("farmland");
+    const rpg::ItemDef* warehouse = rpg::FindItemDef("warehouse");
+    const rpg::ItemDef* sawmill = rpg::FindItemDef("sawmill");
+    const rpg::ItemDef* plank = rpg::FindItemDef("plank");
     if (!potion || potion->maxStack != 20 || potion->properties.at("heal") != 30.0f ||
         potion->iconPath.empty() || potion->worldImagePath.empty()) {
         std::cerr << "small_potion data mismatch\n";
@@ -61,6 +70,18 @@ int main() {
     }
     if (!territoryAnchor || territoryAnchor->properties.at("territory_radius") != 3.0f) {
         std::cerr << "territory anchor data mismatch\n";
+        return 1;
+    }
+    if (!riceSeed || riceSeed->maxStack != 99 || riceSeed->properties.at("seed") != 1.0f ||
+        riceSeed->properties.at("crop_days") != 2.0f || riceSeed->properties.at("harvest_count") != 2.0f) {
+        std::cerr << "crop seed data mismatch\n";
+        return 1;
+    }
+    if (!farmland || farmland->properties.at("planting") != 1.0f ||
+        !warehouse || warehouse->properties.at("storage_slots") != 500.0f ||
+        !sawmill || sawmill->properties.at("sawmill") != 1.0f ||
+        !plank || plank->maxStack != 99) {
+        std::cerr << "building item data mismatch\n";
         return 1;
     }
     const rpg::ItemDef* gatheringStoneIII = rpg::FindItemDef("gathering_stone_iii");

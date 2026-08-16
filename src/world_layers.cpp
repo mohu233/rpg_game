@@ -27,7 +27,46 @@ float HashUnit(int x, int y, int layer, std::uint32_t salt) {
     return static_cast<float>(TileHash(x, y, layer, salt) & 0xffffu) / 65535.0f;
 }
 
-bool IsReserved(int x, int y, int width, int height) {
+struct TilePoint {
+    int x = 0;
+    int y = 0;
+};
+
+TilePoint RandomEdgeTile(const Scene& scene, const WorldLayerDef& layer, std::uint32_t salt) {
+    constexpr int margin = 1;
+    const std::uint32_t edgeRoll = TileHash(scene.mapWidth, scene.mapHeight, layer.index, salt);
+    const std::uint32_t positionRoll = TileHash(scene.mapHeight, scene.mapWidth, layer.index, salt ^ 0x9e3779b9u);
+    switch (edgeRoll % 4u) {
+    case 0:
+        return {margin + static_cast<int>(positionRoll % static_cast<std::uint32_t>(scene.mapWidth - margin * 2)), margin};
+    case 1:
+        return {scene.mapWidth - margin - 1,
+                margin + static_cast<int>(positionRoll % static_cast<std::uint32_t>(scene.mapHeight - margin * 2))};
+    case 2:
+        return {margin + static_cast<int>(positionRoll % static_cast<std::uint32_t>(scene.mapWidth - margin * 2)),
+                scene.mapHeight - margin - 1};
+    default:
+        return {margin,
+                margin + static_cast<int>(positionRoll % static_cast<std::uint32_t>(scene.mapHeight - margin * 2))};
+    }
+}
+
+bool PortalDistanceValid(TilePoint first, TilePoint second, int mapWidth) {
+    const int dx = first.x - second.x;
+    const int dy = first.y - second.y;
+    return dx * dx + dy * dy >= mapWidth * mapWidth;
+}
+
+std::array<TilePoint, 2> PortalTiles(const Scene& scene, const WorldLayerDef& layer) {
+    TilePoint upward = RandomEdgeTile(scene, layer, 0x51f15e5du);
+    for (std::uint32_t attempt = 0; attempt < 256; ++attempt) {
+        const TilePoint downward = RandomEdgeTile(scene, layer, 0xa17e4d23u + attempt * 0x45d9f3bu);
+        if (PortalDistanceValid(upward, downward, scene.mapWidth)) return {upward, downward};
+    }
+    return {TilePoint{1, 1}, TilePoint{scene.mapWidth - 2, scene.mapHeight - 2}};
+}
+
+bool IsReserved(int x, int y, int width, int height, const std::array<TilePoint, 2>& portals) {
     const int centerX = width / 2;
     const int centerY = height / 2;
     const auto near = [x, y](int px, int py, int radius) {
@@ -35,7 +74,8 @@ bool IsReserved(int x, int y, int width, int height) {
         const int dy = y - py;
         return dx * dx + dy * dy <= radius * radius;
     };
-    return near(centerX, centerY, 7) || near(4, 4, 6) || near(width - 5, height - 5, 6);
+    return near(centerX, centerY, 8) || near(portals[0].x, portals[0].y, 6) ||
+           near(portals[1].x, portals[1].y, 6);
 }
 
 SceneObject MakeGeneratedObject(std::string_view type, Vec2 pos, int& nextId) {
@@ -44,23 +84,36 @@ SceneObject MakeGeneratedObject(std::string_view type, Vec2 pos, int& nextId) {
     return object;
 }
 
-void AddPortal(Scene& scene, const WorldLayerDef& layer, bool upward, int& nextId) {
+bool EnsurePortal(Scene& scene, const WorldLayerDef& layer, bool upward, TilePoint tile) {
     const int targetIndex = upward ? layer.index - 1 : layer.index + 1;
-    if (targetIndex < 1 || targetIndex > static_cast<int>(kLayers.size())) {
-        return;
-    }
+    if (targetIndex < 1 || targetIndex > static_cast<int>(kLayers.size())) return false;
 
     const WorldLayerDef& target = kLayers[static_cast<size_t>(targetIndex - 1)];
-    const int tx = upward ? 4 : scene.mapWidth - 5;
-    const int ty = upward ? 4 : scene.mapHeight - 5;
-    SceneObject portal = MakeObject(
-        "teleport_point",
-        {(tx + 0.5f) * kTileSize, (ty + 1.0f) * kTileSize},
-        nextId++);
-    portal.id = upward ? "portal_up" : "portal_down";
-    portal.targetScene = std::filesystem::path(target.fileName).generic_u8string();
-    portal.targetId = upward ? "portal_down" : "portal_up";
-    scene.objects.push_back(std::move(portal));
+    const std::string id = upward ? "portal_up" : "portal_down";
+    const std::string targetScene = std::filesystem::path(target.fileName).generic_u8string();
+    const std::string targetId = upward ? "portal_down" : "portal_up";
+    const Vec2 position{(tile.x + 0.5f) * kTileSize, (tile.y + 1.0f) * kTileSize};
+    auto found = std::find_if(scene.objects.begin(), scene.objects.end(), [&](const SceneObject& object) {
+        return object.id == id;
+    });
+    if (found == scene.objects.end()) {
+        SceneObject portal = MakeObject("teleport_point", position, static_cast<int>(scene.objects.size()) + 1);
+        portal.id = id;
+        portal.targetScene = targetScene;
+        portal.targetId = targetId;
+        scene.objects.push_back(std::move(portal));
+        return true;
+    }
+    const bool changed = found->type != "teleport_point" || found->pos.x != position.x || found->pos.y != position.y ||
+                         found->targetScene != targetScene || found->targetId != targetId;
+    if (changed) {
+        SceneObject portal = MakeObject("teleport_point", position, static_cast<int>(scene.objects.size()) + 1);
+        portal.id = id;
+        portal.targetScene = targetScene;
+        portal.targetId = targetId;
+        *found = std::move(portal);
+    }
+    return changed;
 }
 
 } // namespace
@@ -83,6 +136,53 @@ std::filesystem::path WorldLayerPath(const std::filesystem::path& mapsRoot, cons
     return mapsRoot / layer.fileName;
 }
 
+bool EnsureWorldLayerLandmarks(Scene& scene, const WorldLayerDef& layer) {
+    const std::array<TilePoint, 2> portals = PortalTiles(scene, layer);
+    bool changed = false;
+    if (layer.index > 1) changed = EnsurePortal(scene, layer, true, portals[0]) || changed;
+    if (layer.index < static_cast<int>(kLayers.size())) changed = EnsurePortal(scene, layer, false, portals[1]) || changed;
+
+    if (layer.index == 4) {
+        const Vec2 altarPosition{
+            (scene.mapWidth / 2 + 0.5f) * kTileSize,
+            (scene.mapHeight / 2 + 2.0f) * kTileSize,
+        };
+        auto altar = std::find_if(scene.objects.begin(), scene.objects.end(), [](const SceneObject& object) {
+            return object.id == "ending_ritual_altar";
+        });
+        if (altar == scene.objects.end()) {
+            SceneObject object = MakeObject("ending_ritual_altar", altarPosition, static_cast<int>(scene.objects.size()) + 1);
+            object.id = "ending_ritual_altar";
+            scene.objects.push_back(std::move(object));
+            changed = true;
+        } else if (altar->type != "ending_ritual_altar" || altar->pos.x != altarPosition.x || altar->pos.y != altarPosition.y) {
+            SceneObject object = MakeObject("ending_ritual_altar", altarPosition, static_cast<int>(scene.objects.size()) + 1);
+            object.id = "ending_ritual_altar";
+            *altar = std::move(object);
+            changed = true;
+        }
+    }
+
+    const size_t objectCount = scene.objects.size();
+    scene.objects.erase(
+        std::remove_if(scene.objects.begin(), scene.objects.end(), [&](const SceneObject& object) {
+            if (object.id.rfind("generated_", 0) != 0) return false;
+            const int tx = static_cast<int>(object.pos.x / kTileSize);
+            const int ty = static_cast<int>(object.pos.y / kTileSize) - 1;
+            const auto near = [tx, ty](TilePoint point, int radius) {
+                const int dx = tx - point.x;
+                const int dy = ty - point.y;
+                return dx * dx + dy * dy <= radius * radius;
+            };
+            if (layer.index > 1 && near(portals[0], 6)) return true;
+            if (layer.index < static_cast<int>(kLayers.size()) && near(portals[1], 6)) return true;
+            return layer.index == 4 && near({scene.mapWidth / 2, scene.mapHeight / 2}, 8);
+        }),
+        scene.objects.end());
+    changed = changed || scene.objects.size() != objectCount;
+    return changed;
+}
+
 Scene GenerateWorldLayer(const WorldLayerDef& layer, int width, int height, float resourceMultiplier) {
     Scene scene;
     scene.mapWidth = std::clamp(width, layer.minSize, layer.maxSize);
@@ -96,14 +196,14 @@ Scene GenerateWorldLayer(const WorldLayerDef& layer, int width, int height, floa
     };
     scene.hasPlayerStart = layer.index == 1;
 
+    EnsureWorldLayerLandmarks(scene, layer);
+    const std::array<TilePoint, 2> portals = PortalTiles(scene, layer);
     int nextId = 1;
-    AddPortal(scene, layer, true, nextId);
-    AddPortal(scene, layer, false, nextId);
 
     constexpr int spacing = 5;
     for (int y = 3; y < scene.mapHeight - 3; y += spacing) {
         for (int x = 3; x < scene.mapWidth - 3; x += spacing) {
-            if (IsReserved(x, y, scene.mapWidth, scene.mapHeight)) {
+            if (IsReserved(x, y, scene.mapWidth, scene.mapHeight, portals)) {
                 continue;
             }
 
@@ -140,7 +240,8 @@ void RegenerateWorldLayerResources(Scene& scene, const WorldLayerDef& layer) {
     Scene generated = GenerateWorldLayer(layer, scene.mapWidth, scene.mapHeight);
     scene.objects.erase(
         std::remove_if(scene.objects.begin(), scene.objects.end(), [](const SceneObject& object) {
-            return object.id.rfind("generated_", 0) == 0 || ObjectIsTeleport(object);
+            return object.id.rfind("generated_", 0) == 0 || ObjectIsTeleport(object) ||
+                   object.id == "ending_ritual_altar";
         }),
         scene.objects.end());
     scene.objects.insert(
@@ -195,6 +296,9 @@ bool EnsureWorldLayerFiles(const std::filesystem::path& mapsRoot, std::string* e
     for (const WorldLayerDef& layer : kLayers) {
         const std::filesystem::path path = WorldLayerPath(mapsRoot, layer);
         if (std::filesystem::is_regular_file(path, ec)) {
+            Scene scene;
+            if (!LoadSceneFromFile(path, scene, error)) return false;
+            if (EnsureWorldLayerLandmarks(scene, layer) && !SaveSceneToFile(path, scene, error)) return false;
             continue;
         }
         Scene scene = GenerateWorldLayer(layer, layer.defaultWidth, layer.defaultHeight);

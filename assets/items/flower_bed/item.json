@@ -1,0 +1,24 @@
+{
+  "id": "flower_bed",
+  "display_name": "花坛",
+  "max_stack": 20,
+  "color": "#9b6f89",
+  "icon": "items/flower_bed/icon.png",
+  "world_image": "items/flower_bed/world.png",
+  "source": "建造石建造",
+  "category": "building",
+  "properties": {
+    "building": 1,
+    "ground_overlay": 1,
+    "comfort": 2
+  },
+  "recipe": {
+    "station": "workbench",
+    "ingredients": [
+      {
+        "item": "fodder",
+        "count": 1
+      }
+    ]
+  }
+}

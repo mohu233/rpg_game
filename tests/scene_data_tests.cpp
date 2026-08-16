@@ -35,6 +35,22 @@ int main(int argc, char** argv) {
         !rpg::FindObjectDef("bush")) {
         return Fail("missing one of the built-in object modules");
     }
+    constexpr const char* goodsBuildings[] = {
+        "farmland", "flower_bed", "pond", "stone_floor", "wood_floor",
+        "warehouse", "campfire", "apothecary", "kitchen", "furnace", "sawmill",
+        "cottage_4x3", "teleport_point",
+    };
+    for (const char* id : goodsBuildings) {
+        const rpg::SceneObjectDef* def = rpg::FindObjectDef(id);
+        if (!def || !def->building || !def->placeable) {
+            return Fail(std::string("missing or non-placeable goods building: ") + id);
+        }
+    }
+    const rpg::SceneObjectDef* altarDef = rpg::FindObjectDef("ending_ritual_altar");
+    if (!altarDef || !altarDef->building || altarDef->placeable || altarDef->draggable ||
+        altarDef->footprintWidth != 5 || altarDef->footprintHeight != 4) {
+        return Fail("ending ritual altar definition is missing or invalid");
+    }
     if (!rpg::ReloadTerrainDefs(&error)) {
         return Fail("failed to load terrain modules: " + error);
     }
@@ -73,6 +89,11 @@ int main(int argc, char** argv) {
 
     const std::filesystem::path roundTripPath = std::filesystem::current_path() / L"scene_roundtrip_test.json";
     rpg::SetTerritory(original, 8, 8, true);
+    rpg::SceneObject plantedFarmland = rpg::MakeObject("farmland", {408.0f, 432.0f}, 9901);
+    plantedFarmland.id = "roundtrip_farmland";
+    plantedFarmland.cropId = "rice";
+    plantedFarmland.cropGrowthDays = 1;
+    original.objects.push_back(plantedFarmland);
     if (!rpg::SaveSceneToFile(roundTripPath, original, &error)) {
         return Fail("failed to save round-trip scene: " + error);
     }
@@ -97,7 +118,9 @@ int main(int argc, char** argv) {
         if (loaded.objects[i].id != original.objects[i].id ||
             loaded.objects[i].type != original.objects[i].type ||
             !NearlyEqual(loaded.objects[i].pos.x, original.objects[i].pos.x) ||
-            !NearlyEqual(loaded.objects[i].pos.y, original.objects[i].pos.y)) {
+            !NearlyEqual(loaded.objects[i].pos.y, original.objects[i].pos.y) ||
+            loaded.objects[i].cropId != original.objects[i].cropId ||
+            loaded.objects[i].cropGrowthDays != original.objects[i].cropGrowthDays) {
             return Fail("scene object changed during round trip");
         }
     }
@@ -170,18 +193,35 @@ int main(int argc, char** argv) {
             return Fail("generated world layer has invalid dimensions");
         }
         int portalCount = 0;
+        int altarCount = 0;
+        std::vector<rpg::Vec2> portalPositions;
         for (const rpg::SceneObject& object : generated.objects) {
+            if (object.type == "ending_ritual_altar") ++altarCount;
             if (!rpg::ObjectIsTeleport(object)) {
                 continue;
             }
             ++portalCount;
+            portalPositions.push_back(object.pos);
             if (object.targetScene.empty() || object.targetId.empty()) {
                 return Fail("generated portal is missing its destination");
             }
+            const int tx = static_cast<int>(object.pos.x / rpg::kTileSize);
+            const int ty = static_cast<int>(object.pos.y / rpg::kTileSize) - 1;
+            if (tx != 1 && tx != generated.mapWidth - 2 && ty != 1 && ty != generated.mapHeight - 2) {
+                return Fail("generated portal is not on a map edge");
+            }
         }
         const int expectedPortals = layer.index == 1 || layer.index == 4 ? 1 : 2;
-        if (portalCount != expectedPortals || generated.objects.size() <= static_cast<size_t>(portalCount)) {
+        if (portalCount != expectedPortals || altarCount != (layer.index == 4 ? 1 : 0) ||
+            generated.objects.size() <= static_cast<size_t>(portalCount + altarCount)) {
             return Fail("generated layer has incorrect portals or no resources");
+        }
+        if (portalPositions.size() == 2) {
+            const float dx = portalPositions[0].x - portalPositions[1].x;
+            const float dy = portalPositions[0].y - portalPositions[1].y;
+            if (dx * dx + dy * dy < std::pow(generated.mapWidth * rpg::kTileSize, 2.0f)) {
+                return Fail("generated portals are closer than one map width");
+            }
         }
     }
 
@@ -203,6 +243,11 @@ int main(int argc, char** argv) {
     saveRequest.territoryDaysPassed = 9;
     saveRequest.exploredMaps.push_back({L"veil_lands.json", 9, {1, 0, 1, 1, 0, 0, 1, 0, 1}});
     saveRequest.exploredMaps.push_back({L"ancient_altar.json", 5, {0, 1, 0, 1, 1}});
+    std::vector<std::uint8_t> largeExploredMap(160000, 0);
+    largeExploredMap[0] = 1;
+    largeExploredMap[79999] = 1;
+    largeExploredMap[159999] = 1;
+    saveRequest.exploredMaps.push_back({L"large_map.json", static_cast<int>(largeExploredMap.size()), largeExploredMap});
     rpg::SaveGameInfo::ResidentEntry worker;
     worker.name = L"青栀";
     worker.x = 144.0f;
@@ -252,11 +297,14 @@ int main(int argc, char** argv) {
         !NearlyEqual(loadedSave.territoryStability, 67.5f) ||
         !NearlyEqual(loadedSave.territoryDayProgress, 0.625f) ||
         loadedSave.territoryDaysPassed != 9 ||
-        loadedSave.exploredMaps.size() != 2 ||
+        loadedSave.exploredMaps.size() != 3 ||
         loadedSave.exploredMaps[0].mapName != L"veil_lands.json" ||
         loadedSave.exploredMaps[0].tiles != std::vector<std::uint8_t>({1, 0, 1, 1, 0, 0, 1, 0, 1}) ||
         loadedSave.exploredMaps[1].mapName != L"ancient_altar.json" ||
         loadedSave.exploredMaps[1].tiles != std::vector<std::uint8_t>({0, 1, 0, 1, 1}) ||
+        loadedSave.exploredMaps[2].mapName != L"large_map.json" ||
+        loadedSave.exploredMaps[2].tileCount != static_cast<int>(largeExploredMap.size()) ||
+        loadedSave.exploredMaps[2].tiles != largeExploredMap ||
         loadedSave.residents.size() != 1 ||
         loadedSave.residents[0].taskMode != 2 ||
         loadedSave.residents[0].gatheringTarget != "exotic_wood" ||
